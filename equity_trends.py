@@ -2,10 +2,9 @@
 Signal Lab
 =============================================
 
-A "what's unusual right now" tool for a single equity, with improved
-narrative synthesis to help build trading confidence (reversal and momentum).
-
-Updated with new top-level Situation Summary + Key Observations.
+Updated version with:
+- Stronger focus on Reversal Signals
+- Clearer "Recent triggers" section (now called "Historical Examples")
 """
 
 from __future__ import annotations
@@ -149,7 +148,7 @@ def percentile_of(series: pd.Series, value: float) -> float:
     return float((s <= value).mean()) if len(s) else float("nan")
 
 
-# ---------------------- Narrative Layer (New) ----------------------
+# ---------------------- Narrative Layer ----------------------
 
 def _get_band_position(close: float, bb: pd.DataFrame) -> str:
     if pd.isna(close):
@@ -177,10 +176,6 @@ def generate_narrative(
     drawdown: float,
     last_z: float,
 ) -> dict:
-    """
-    Returns a dict with 'summary' and 'observations' based on current signals.
-    This is a self-contained version of the narrative logic.
-    """
     last_close = close.iloc[-1]
     last_rsi = rsi.iloc[-1]
     band_pos = _get_band_position(last_close, bb)
@@ -194,7 +189,6 @@ def generate_narrative(
     bucket = "mixed"
     summary = "The current picture is mixed."
 
-    # High-volatility capitulation
     if (abs(drawdown) > 0.12 and vol_percentile > 0.85 and streak_len >= 5 and
             ((streak_sign < 0 and last_rsi < 30) or (streak_sign > 0 and last_rsi > 70))):
         bucket = "capitulation"
@@ -205,7 +199,6 @@ def generate_narrative(
         observations.append("Elevated volatility regime — these setups can produce sharp bounces or continued selling.")
         observations.append("Position sizing discipline is especially important here.")
 
-    # Mixed / Conflicting
     elif regime in ("uptrend", "downtrend"):
         reversal_pressure = False
         if regime == "uptrend" and (band_pos == "above_upper" or last_rsi > 70):
@@ -221,7 +214,6 @@ def generate_narrative(
             observations.append(f"Shorter-term concerns: {streak_len}-day {streak_word} streak + price near band extreme.")
             observations.append("These situations often benefit from waiting for clearer resolution.")
 
-    # Squeeze Breakout
     elif bandwidth_pct < 0.6 and abs(last_z) > 1.8:
         bucket = "squeeze_breakout"
         direction = "upward" if last_z > 0 else "downward"
@@ -230,7 +222,6 @@ def generate_narrative(
         observations.append(f"Recent squeeze followed by strong move (z-score {last_z:+.1f}).")
         observations.append("Volatility expansion is now underway.")
 
-    # Classic Reversal
     elif (band_pos == "below_lower" and last_rsi < 30 and streak_sign <= 0) or \
          (band_pos == "above_upper" and last_rsi > 70 and streak_sign >= 0):
         bucket = "classic_reversal"
@@ -242,7 +233,6 @@ def generate_narrative(
         if regime != "undefined":
             observations.append(f"Note: This is occurring while the longer-term regime is still {regime}.")
 
-    # Trend Exhaustion
     elif regime in ("uptrend", "downtrend") and streak_len >= 6 and vol_percentile > 0.6:
         if (regime == "uptrend" and (band_pos == "above_upper" or last_rsi > 68)) or \
            (regime == "downtrend" and (band_pos == "below_lower" or last_rsi < 32)):
@@ -253,7 +243,6 @@ def generate_narrative(
             observations.append("Reversal pressure rising: Price at band extreme + RSI extreme.")
             observations.append("Higher risk of a meaningful pullback or reversal from here.")
 
-    # Clean Strong Trend
     elif regime in ("uptrend", "downtrend") and streak_len >= 4 and 0.35 < vol_percentile < 0.80:
         if (regime == "uptrend" and band_pos in ("above_upper", "upper_half")) or \
            (regime == "downtrend" and band_pos in ("below_lower", "lower_half")):
@@ -264,7 +253,6 @@ def generate_narrative(
             observations.append(f"Momentum: {streak_len}-day {streak_word} streak + sustained band pressure.")
             observations.append("No significant reversal signals are currently active.")
 
-    # Squeeze - Low Conviction
     elif bandwidth_pct < 0.55:
         bucket = "squeeze_low_conviction"
         summary = ("Volatility has compressed to unusually low levels. The Bollinger Bands are extremely tight, "
@@ -273,7 +261,6 @@ def generate_narrative(
         observations.append("No dominant streak or clear RSI bias is present.")
         observations.append("The next decisive move outside the bands is likely to carry weight.")
 
-    # High Volatility Churn
     elif vol_percentile > 0.80 and streak_len < 4:
         bucket = "high_vol_churn"
         summary = ("Volatility is elevated, but price action lacks a clear dominant streak or strong directional bias. "
@@ -282,7 +269,6 @@ def generate_narrative(
         observations.append("No sustained streak or clear band walk in progress.")
         observations.append("Lower confidence in directional trades until structure returns.")
 
-    # Quiet / Low Conviction Range
     else:
         bucket = "quiet_range"
         summary = ("The stock is in a low-volatility, range-bound state with little momentum or reversal pressure. "
@@ -298,7 +284,7 @@ def generate_narrative(
     }
 
 
-# ---------------------- Rest of original compute functions --------------------
+# ---------------------- Original compute functions (kept) --------------------
 
 MIN_OCCURRENCES = 20
 SIGNAL_HORIZON = 10
@@ -674,7 +660,42 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== Original Snapshot (kept for now) =====================
+    # ===================== NEW: Dedicated Reversal Signals Section =====================
+    st.markdown("### Reversal Signals")
+
+    reversal_setups = [
+        "RSI crossed below 30 (oversold)",
+        "Close dropped below lower Bollinger band"
+    ]
+
+    triggers = setup_triggers(close, r, bb)
+
+    for name in reversal_setups:
+        sig = triggers[name]
+        by_reg = backtest_by_regime(close, sig, 10)
+        stats = by_reg.get(reg_now) or by_reg["All"]
+
+        st.markdown(f"**{name}**")
+
+        if stats is None or stats["n"] < 10:
+            st.markdown("Not enough historical occurrences to evaluate reliably.")
+        else:
+            st.markdown(
+                f"- Average return over next 10 days: **{stats['mean']:+.1%}** "
+                f"(vs baseline {stats['base_mean']:+.1%})"
+            )
+            st.markdown(f"- Win rate: **{stats['hit_rate']:.0%}** across {stats['n']} similar cases")
+
+        # Show recent examples for this reversal setup
+        rec = recent_trigger_returns(close, sig, 10, k=4)
+        if not rec.empty:
+            st.markdown("_Recent examples:_")
+            st.dataframe(
+                rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
+                use_container_width=True, hide_index=True
+            )
+
+    # ===================== Original Snapshot =====================
     c1, c2, c3, c4 = st.columns(4)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
     c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
@@ -690,21 +711,17 @@ def main():
     bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
     i3.metric("Band width", f"{bw_pct:.0%}")
 
-    # ===================== What's Unusual (kept, slightly elevated) =====================
+    # ===================== What's Unusual =====================
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
 
-    # ===================== Rest of original content (backtests, charts, etc.) =====================
-    st.markdown("### Setup backtests")
-    st.caption("Forward return after each historical trigger, vs. just holding.")
-    if reg_now != "undefined":
-        st.markdown(f"**{reg_now.capitalize()}** · price "
-                    f"{'above' if reg_now == 'uptrend' else 'below'} the 200-day average.")
+    # ===================== Setup backtests (kept but de-emphasized) =====================
+    st.markdown("### All Setup Backtests")
+    st.caption("Historical performance after every tracked setup (for reference).")
 
-    lc, rc = st.columns([1, 2])
-    horizon = lc.selectbox("Days ahead", [5, 10, 21, 42], index=1)
-    split = rc.checkbox("Split by regime", value=True)
+    if reg_now != "undefined":
+        st.markdown(f"**Current regime:** {reg_now.capitalize()}")
 
     triggers = setup_triggers(close, r, bb)
     up_mask, down_mask = trend_regime(close)
@@ -730,46 +747,44 @@ def main():
         rows = []
         for name in names:
             sig = triggers[name]
-            if split:
-                by_reg = backtest_by_regime(close, sig, horizon)
-                rows.append(_row(name, "Uptrend (above 200-day)",
-                                 by_reg["Uptrend (above 200-day)"],
-                                 last_trigger_date(sig & up_mask)))
-                rows.append(_row(name, "Downtrend (below 200-day)",
-                                 by_reg["Downtrend (below 200-day)"],
-                                 last_trigger_date(sig & down_mask)))
-            else:
-                rows.append(_row(name, "All", backtest_setup(close, sig, horizon),
-                                 last_trigger_date(sig)))
+            by_reg = backtest_by_regime(close, sig, 10)
+            rows.append(_row(name, "Uptrend (above 200-day)",
+                             by_reg["Uptrend (above 200-day)"],
+                             last_trigger_date(sig & up_mask)))
+            rows.append(_row(name, "Downtrend (below 200-day)",
+                             by_reg["Downtrend (below 200-day)"],
+                             last_trigger_date(sig & down_mask)))
         df_g = pd.DataFrame(rows)[cols].set_index(["Setup", "Regime"])
         st.dataframe(df_g.style.format(fmt, na_rep="—"), use_container_width=True)
 
     bullish = [n for n in triggers if SETUP_DIRECTION[n] == "bullish"]
     bearish = [n for n in triggers if SETUP_DIRECTION[n] == "bearish"]
-    render_group("📈 Buy-side", bullish)
-    render_group("📉 Sell-side", bearish)
+    render_group("Buy-side setups", bullish)
+    render_group("Sell-side setups", bearish)
 
-    st.caption(f"Under {MIN_OCCURRENCES} triggers is too thin to trust.")
-
-    with st.expander("Recent triggers"):
-        st.caption("The last few times each setup fired, and the move that followed.")
+    # ===================== Historical Examples (renamed and clarified) =====================
+    with st.expander("Historical Examples After These Setups"):
+        st.caption(
+            "This shows the actual dates when each setup last triggered, "
+            "plus what happened to the stock over the following 10 trading days. "
+            "Useful for seeing real-world outcomes instead of just averages."
+        )
         for name in triggers:
-            rec = recent_trigger_returns(close, triggers[name], horizon, k=6)
+            rec = recent_trigger_returns(close, triggers[name], 10, k=5)
             st.markdown(f"**{name}**")
             if rec.empty:
                 st.caption("Never triggered in this history.")
             else:
                 st.dataframe(
-                    rec.style.format({f"Move over next {horizon}d": "{:+.1%}"}, na_rep="—"),
+                    rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
                     use_container_width=True, hide_index=True,
                 )
 
-    # Charts (kept but moved lower)
+    # Charts
     tail = close.iloc[-252:].index
 
     st.markdown("### RSI · 1Y")
-    st.slider("RSI period", min_value=2, max_value=50, key="rsi_period",
-              help="Lookback window for RSI.")
+    st.slider("RSI period", min_value=2, max_value=50, key="rsi_period")
     rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
     st.line_chart(rsi_df, height=320)
 
