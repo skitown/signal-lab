@@ -40,6 +40,20 @@ def load_history(ticker: str, period: str = "10y") -> pd.DataFrame:
     return df[["Open", "High", "Low", "Close", "Volume"]]
 
 
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def get_company_name(ticker: str) -> str:
+    """Fetch company name from Yahoo (longName preferred). Cached 24h."""
+    if yf is None:
+        return ""
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        name = info.get("longName") or info.get("shortName") or ""
+        return name.strip()
+    except Exception:
+        return ""
+
+
 # --------------------------- Compute layer ----------------------------
 
 def run_table(close: pd.Series) -> pd.DataFrame:
@@ -616,13 +630,14 @@ def main():
 
     close = df["Close"].dropna()
     last_date = close.index[-1].date()
-    st.markdown(
-        f"<div style='font-size:clamp(36px,9vw,54px);font-weight:800;line-height:1.02;"
-        f"margin:2px 0 0'>{ticker}</div>"
-        f"<div style='color:#888;font-size:0.85rem;margin:2px 0 14px'>"
-        f"through {last_date} · {len(close):,} trading days</div>",
-        unsafe_allow_html=True,
-    )
+    company_name = get_company_name(ticker)
+
+    header = f"<div style='font-size:clamp(36px,9vw,54px);font-weight:800;line-height:1.02;margin:2px 0 0'>{ticker}</div>"
+    if company_name:
+        header += f"<div style='font-size:clamp(13px,2.6vw,16px);color:#666;margin:-2px 0 4px'>{company_name}</div>"
+    header += f"<div style='color:#888;font-size:0.85rem;margin:2px 0 14px'>through {last_date} · {len(close):,} trading days</div>"
+
+    st.markdown(header, unsafe_allow_html=True)
 
     bb = bollinger(close)
     r = rsi(close, rsi_period)
