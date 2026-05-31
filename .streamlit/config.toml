@@ -1,0 +1,4 @@
+[theme]
+# Green primary instead of Streamlit's default red. Controls the focused-input
+# border, primary buttons, sliders, etc. — the version-proof way to kill the red.
+primaryColor = "#16a34a"
