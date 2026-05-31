@@ -552,6 +552,12 @@ def main():
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:last-child {
           flex: 0 0 auto !important;
         }
+        /* Let the input itself shrink to 0 so the button is never clipped off-screen. */
+        [data-testid="stTextInput"],
+        [data-testid="stTextInput"] > div,
+        [data-testid="stTextInput"] input {
+          min-width: 0 !important;
+        }
         div[data-testid="stButton"] button { white-space: nowrap !important; }
         /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
         div[data-testid="stDataFrame"] > div { overflow-x: auto; }
