@@ -798,7 +798,7 @@ def main():
     tail = close.iloc[-252:].index
 
     st.markdown("### RSI · 1Y")
-    st.slider("RSI period", min_value=2, max_value=50, key="rsi_period")
+    st.slider("RSI period", min_value=2, max_value=50, value=14, key="rsi_period")
     rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
     st.line_chart(rsi_df, height=320)
 
