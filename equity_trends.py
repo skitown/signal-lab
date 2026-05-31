@@ -1,9 +1,14 @@
 """
-Signal Lab - Complete Working Version
-=====================================
+Signal Lab - Clean Rollback Version
+===================================
 
-This is a self-contained, complete version of the app with all required functions defined.
-It includes the company name, improved narrative, and the structure from recent iterations.
+This is a stable rollback with the key improvements you liked:
+- Company name under ticker
+- Defensive language for overbought conditions in strong trends (the note about structural demand shifts)
+- Stronger disclaimer
+- All functions properly defined and returning correct types
+
+Reverted to a simpler, more reliable structure to stop the breakage.
 """
 
 from __future__ import annotations
@@ -19,22 +24,35 @@ except ImportError:
     yf = None
 
 
-# ----------------------------- Helper functions -----------------------------
+# ----------------------------- Data layer -----------------------------
 
-def trailing_return(close: pd.Series, days: int) -> float:
-    if len(close) <= days:
-        return np.nan
-    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def load_history(ticker: str, period: str = "10y") -> pd.DataFrame:
+    if yf is None:
+        raise RuntimeError("yfinance not installed. Run: pip install yfinance")
+    df = yf.Ticker(ticker).history(period=period, auto_adjust=True)
+    if df.empty:
+        raise ValueError(f"No data returned for '{ticker}'. Check the symbol.")
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    return df[["Open", "High", "Low", "Close", "Volume"]]
 
 
-def ytd_return(close: pd.Series) -> float:
-    """Year-to-date return."""
-    yr = close.index[-1].year
-    this_year = close[close.index.year == yr]
-    if len(this_year) < 2:
-        return np.nan
-    return this_year.iloc[-1] / this_year.iloc[0] - 1.0
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def get_company_name(ticker: str) -> str:
+    """Fetch company name from Yahoo (longName preferred). Cached 24h."""
+    if yf is None:
+        return ""
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        name = info.get("longName") or info.get("shortName") or ""
+        return name.strip()
+    except Exception:
+        return ""
 
+
+# --------------------------- Compute layer ----------------------------
 
 def run_table(close: pd.Series) -> pd.DataFrame:
     sign = np.sign(close.diff()).fillna(0)
@@ -59,6 +77,7 @@ def drawdown_series(close: pd.Series) -> pd.Series:
 
 
 def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
+    """Returns (current annualized vol, its percentile vs own history)"""
     ret = close.pct_change()
     rv = ret.rolling(window).std() * np.sqrt(252)
     cur = rv.iloc[-1]
@@ -82,17 +101,6 @@ def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> pd.Data
     return pd.DataFrame({"mid": mid, "upper": upper, "lower": lower, "bandwidth": bandwidth}, index=close.index)
 
 
-def upper_band_walk(close: pd.Series, window: int = 20, n_std: float = 2.0) -> int:
-    above = close > bollinger(close, window, n_std)["upper"]
-    count = 0
-    for val in reversed(above.tolist()):
-        if val:
-            count += 1
-        else:
-            break
-    return count
-
-
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -110,24 +118,31 @@ def current_regime(close: pd.Series, window: int = 200) -> str:
     return "uptrend" if close.iloc[-1] > sma.iloc[-1] else "downtrend"
 
 
-# ---------------------- Narrative ----------------------
+def trailing_return(close: pd.Series, days: int) -> float:
+    if len(close) <= days:
+        return np.nan
+    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+
+
+# ---------------------- Narrative (with defensive language) ----------------------
 
 def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
 
+    # Strong trend + stretched conditions (the key defensive case for names like MU)
     if regime == "uptrend" and streak_len >= 5 and (last_rsi > 72 or abs(last_z) > 2.0):
         summary = ("Strong bullish trend and momentum, but conditions have become statistically stretched. "
                    "RSI is deeply overbought and the move is extended by historical standards. "
                    "In a normal environment this would often lead to digestion or reversal risk. "
-                   "However, if the fundamental demand picture has structurally improved, "
+                   "However, if the fundamental demand picture has structurally improved (e.g. new multi-year growth driver), "
                    "the historical ranges may be less predictive than usual.")
         observations = [
             f"Extreme overbought reading: RSI at {last_rsi:.0f}.",
             f"Extended streak: {streak_len} days up.",
             "This is the classic tension: powerful momentum vs. statistically extreme conditions."
         ]
-        return {"summary": summary, "observations": observations}
+        return {"summary": summary, "observations": observations, "bucket": "strong_trend_stretched"}
 
     if regime in ("uptrend", "downtrend") and streak_len >= 4:
         summary = f"Strong {regime} with sustained momentum."
@@ -135,14 +150,14 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
             f"Clear trend: Price well {'above' if regime == 'uptrend' else 'below'} the 200-day average.",
             f"Extended streak: {streak_len} days."
         ]
-        return {"summary": summary, "observations": observations}
+        return {"summary": summary, "observations": observations, "bucket": "clean_trend"}
 
     summary = "No dominant directional or reversal pressure stands out at the moment."
     observations = ["The market is in a relatively neutral or mixed state based on these indicators."]
-    return {"summary": summary, "observations": observations}
+    return {"summary": summary, "observations": observations, "bucket": "quiet_or_mixed"}
 
 
-# ---------------------- Verdict ----------------------
+# ---------------------- Verdict logic (with defensive note) ----------------------
 
 def build_trade_idea(close, rsi_series, bb):
     regime = current_regime(close)
@@ -177,7 +192,7 @@ def build_trade_idea(close, rsi_series, bb):
     return verdict, score, reasons, 0, 0
 
 
-# ------------------------- Findings -------------------------
+# ------------------------- Findings (simplified but stable) -------------------------
 
 def build_findings(close, rsi_period=14):
     findings = []
@@ -219,6 +234,10 @@ def main():
         <style>
         @media (max-width: 640px) {
           .block-container { padding: 2.5rem 0.9rem 3rem !important; }
+        }
+        @media (min-width: 641px) {
+          div[data-testid="stMetricValue"] { font-size: 1.0rem !important; }
+          div[data-testid="stMetricLabel"] { font-size: 0.6rem !important; }
         }
         </style>
         """,
@@ -315,7 +334,7 @@ def main():
     with st.expander("How Similar Setups Have Performed", expanded=False):
         st.write("Backtest tables would appear here in a fuller version.")
 
-    # See recent real cases
+    # See recent real cases (mobile friendly)
     @st.dialog("Recent real cases")
     def show_recent_cases(setup_name):
         st.write(f"Recent examples for {setup_name} would appear here (demo mode).")
@@ -325,17 +344,17 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("RSI < 30", use_container_width=True):
+        if st.button("RSI < 30 examples", use_container_width=True):
             show_recent_cases("RSI < 30")
-        if st.button("Below Lower BB", use_container_width=True):
+        if st.button("Below Lower BB examples", use_container_width=True):
             show_recent_cases("Below Lower BB")
     with col2:
-        if st.button("RSI > 70", use_container_width=True):
+        if st.button("RSI > 70 examples", use_container_width=True):
             show_recent_cases("RSI > 70")
-        if st.button("Above Upper BB", use_container_width=True):
+        if st.button("Above Upper BB examples", use_container_width=True):
             show_recent_cases("Above Upper BB")
 
-    # Charts
+    # Charts (collapsed)
     with st.expander("Detailed Charts", expanded=False):
         st.line_chart(close.iloc[-252:], height=280)
         st.line_chart(r.iloc[-252:], height=280)
