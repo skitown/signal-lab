@@ -1,5 +1,0 @@
-[theme]
-# Dark ("blackout") base, with a green primary instead of Streamlit's default red.
-# primaryColor drives the focused-input border, primary buttons, sliders, etc.
-base = "dark"
-primaryColor = "#16a34a"
