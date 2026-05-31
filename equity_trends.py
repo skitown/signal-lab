@@ -516,6 +516,7 @@ QUICK_PICKS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
 def _pick_ticker(symbol: str) -> None:
     """Button callback — runs before rerun, so the text box picks it up cleanly."""
     st.session_state.ticker = symbol
+    st.session_state.qp_open = False  # collapse the Quick picks pane on selection
 
 
 def main():
@@ -568,6 +569,8 @@ def main():
         st.session_state.active_ticker = ""
     if "rsi_period" not in st.session_state:
         st.session_state.rsi_period = 14
+    if "qp_open" not in st.session_state:
+        st.session_state.qp_open = False
 
     # Primary controls live in the page body (not a sidebar). A form means typing
     # or tapping a quick pick only PRE-FILLS the field — analysis runs when Search
@@ -581,7 +584,7 @@ def main():
     if submitted:
         st.session_state.active_ticker = st.session_state.ticker.strip().upper()
 
-    with st.expander("Quick picks"):
+    with st.expander("Quick picks", expanded=st.session_state.qp_open):
         qcols = st.columns(5)
         for i, sym in enumerate(QUICK_PICKS):
             qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
