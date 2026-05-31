@@ -777,22 +777,36 @@ def main():
     render_group("Buy-side setups", bullish)
     render_group("Sell-side setups", bearish)
 
-    with st.expander("Historical Examples After These Setups"):
-        st.caption(
-            "This shows the actual dates when each setup last triggered, "
-            "plus what happened to the stock over the following 10 trading days. "
-            "Useful for seeing real-world outcomes instead of just averages."
-        )
-        for name in triggers:
-            rec = recent_trigger_returns(close, triggers[name], 10, k=5)
-            st.markdown(f"**{name}**")
-            if rec.empty:
-                st.caption("Never triggered in this history.")
-            else:
-                st.dataframe(
-                    rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
-                    use_container_width=True, hide_index=True,
-                )
+    # Mobile-friendly "See recent real cases" using dialogs (much better on phones)
+    @st.dialog("Recent real cases")
+    def show_recent_cases(setup_name: str, signal: pd.Series, horizon: int):
+        rec = recent_trigger_returns(close, signal, horizon, k=5)
+        st.markdown(f"**{setup_name}** — Last 5 times + what happened next")
+        if rec.empty:
+            st.write("No recent triggers found.")
+        else:
+            for _, row in rec.iterrows():
+                date = row['Trigger date']
+                move = row[f'Move over next {horizon}d']
+                st.write(f"**{date}** → **{move:+.1%}**")
+
+    st.markdown("### See recent real cases")
+
+    st.caption("Tap a button to see the actual recent dates a setup triggered and the return that followed. Much better on phones than giant tables.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("RSI < 30", use_container_width=True):
+            show_recent_cases("RSI crossed below 30 (oversold)", triggers["RSI crossed below 30 (oversold)"], 10)
+        if st.button("Below Lower BB", use_container_width=True):
+            show_recent_cases("Close dropped below lower Bollinger band", triggers["Close dropped below lower Bollinger band"], 10)
+
+    with col2:
+        if st.button("RSI > 70", use_container_width=True):
+            show_recent_cases("RSI crossed above 70 (overbought)", triggers["RSI crossed above 70 (overbought)"], 10)
+        if st.button("Above Upper BB", use_container_width=True):
+            show_recent_cases("Close pushed above upper Bollinger band", triggers["Close pushed above upper Bollinger band"], 10)
 
     # Charts
     tail = close.iloc[-252:].index
