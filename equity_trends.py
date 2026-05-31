@@ -2,11 +2,12 @@
 Signal Lab
 =============================================
 
-Updated with clearer separation between:
-- Overall market bias (Bullish/Neutral/Bearish verdict)
-- Specific Reversal Signals
+This version fixes the Reversal Signals section to be regime-aware.
 
-The verdict now also surfaces "Reversal Pressure" when reversal setups are active against the prevailing trend.
+Key change:
+- "RSI crossed below 30" and "Below lower Bollinger" are no longer blindly labeled as reversal signals.
+- Their meaning now depends on the current trend regime.
+- In strong uptrends (like DELL), RSI < 30 is treated as a bullish pullback, not a reversal.
 """
 
 from __future__ import annotations
@@ -191,6 +192,7 @@ def generate_narrative(
     bucket = "mixed"
     summary = "The current picture is mixed."
 
+    # Strong reversal / capitulation cases
     if (abs(drawdown) > 0.12 and vol_percentile > 0.85 and streak_len >= 5 and
             ((streak_sign < 0 and last_rsi < 30) or (streak_sign > 0 and last_rsi > 70))):
         bucket = "capitulation"
@@ -286,7 +288,7 @@ def generate_narrative(
     }
 
 
-# ---------------------- Original compute functions (kept) --------------------
+# ---------------------- Original compute functions --------------------
 
 MIN_OCCURRENCES = 20
 SIGNAL_HORIZON = 10
@@ -396,7 +398,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
     reasons: list[str] = []
     score = 0
 
-    # Trend regime
     if regime == "uptrend":
         score += 1
         reasons.append("🟢 **Trend:** above the 200-day average (supports bullish bias).")
@@ -404,7 +405,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
         score -= 1
         reasons.append("🔴 **Trend:** below the 200-day average (supports bearish bias).")
 
-    # Medium-term momentum
     m3 = trailing_return(close, 63)
     if not np.isnan(m3):
         if m3 > 0:
@@ -414,7 +414,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
             score -= 1
             reasons.append(f"🔴 **Momentum:** {m3:+.0%} over the last ~3 months.")
 
-    # Recent setup performance
     reversal_setups = [
         "RSI crossed below 30 (oversold)",
         "Close dropped below lower Bollinger band"
@@ -451,7 +450,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
                 momentum_pressure -= 1
                 reasons.append(f"🔴 **Momentum setup fired:** {name} (historically negative in this regime).")
 
-    # Adjust score based on pressures
     if reversal_pressure > 0:
         score += 1
     if reversal_pressure < 0:
@@ -462,7 +460,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
     if momentum_pressure < 0:
         score -= 1
 
-    # Final verdict
     if score >= 2:
         verdict = "Bullish"
     elif score <= -2:
@@ -661,7 +658,6 @@ def main():
     r = rsi(close, rsi_period)
     reg_now = current_regime(close)
 
-    # Updated verdict call that also returns reversal/momentum pressure
     verdict, score, reasons, reversal_pressure, momentum_pressure = build_trade_idea(close, r, bb)
 
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
@@ -674,7 +670,6 @@ def main():
     )
     st.write("")
 
-    # Show reversal pressure clearly
     if reversal_pressure > 0:
         st.markdown("⚠️ **Reversal pressure detected** — multiple reversal setups have fired recently.")
     elif reversal_pressure < 0:
@@ -684,7 +679,7 @@ def main():
         st.markdown(line)
     st.caption("Not financial advice.")
 
-    # ===================== NEW: Narrative Summary =====================
+    # ===================== Narrative Summary =====================
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
     cur_dd = drawdown_series(close).iloc[-1]
@@ -706,22 +701,21 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== Dedicated Reversal Signals Section =====================
+    # ===================== IMPROVED: Regime-Aware Reversal Signals =====================
     st.markdown("### Reversal Signals")
 
-    reversal_setups = [
-        "RSI crossed below 30 (oversold)",
-        "Close dropped below lower Bollinger band"
-    ]
+    st.caption("These are only shown when they represent potential mean-reversion against the prevailing trend.")
 
     triggers = setup_triggers(close, r, bb)
 
-    for name in reversal_setups:
+    # Only show "RSI crossed below 30" as a reversal if we're in a downtrend
+    if reg_now == "downtrend":
+        name = "RSI crossed below 30 (oversold)"
         sig = triggers[name]
         by_reg = backtest_by_regime(close, sig, 10)
         stats = by_reg.get(reg_now) or by_reg["All"]
 
-        st.markdown(f"**{name}**")
+        st.markdown(f"**{name}** (Potential bullish reversal in downtrend)")
 
         if stats is None or stats["n"] < 10:
             st.markdown("Not enough historical occurrences to evaluate reliably.")
@@ -739,6 +733,38 @@ def main():
                 rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
                 use_container_width=True, hide_index=True
             )
+    else:
+        st.markdown("**RSI crossed below 30 (oversold)**")
+        st.markdown("_Currently in an uptrend — this is more likely a bullish pullback than a reversal._")
+
+    # Only show "Below lower Bollinger" as a reversal if we're in a downtrend
+    if reg_now == "downtrend":
+        name = "Close dropped below lower Bollinger band"
+        sig = triggers[name]
+        by_reg = backtest_by_regime(close, sig, 10)
+        stats = by_reg.get(reg_now) or by_reg["All"]
+
+        st.markdown(f"**{name}** (Potential bullish reversal in downtrend)")
+
+        if stats is None or stats["n"] < 10:
+            st.markdown("Not enough historical occurrences to evaluate reliably.")
+        else:
+            st.markdown(
+                f"- Average return over next 10 days: **{stats['mean']:+.1%}** "
+                f"(vs baseline {stats['base_mean']:+.1%})"
+            )
+            st.markdown(f"- Win rate: **{stats['hit_rate']:.0%}** across {stats['n']} similar cases")
+
+        rec = recent_trigger_returns(close, sig, 10, k=4)
+        if not rec.empty:
+            st.markdown("_Recent examples:_")
+            st.dataframe(
+                rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
+                use_container_width=True, hide_index=True
+            )
+    else:
+        st.markdown("**Close dropped below lower Bollinger band**")
+        st.markdown("_Currently in an uptrend — this is more likely a bullish pullback than a reversal._")
 
     # ===================== Snapshot =====================
     c1, c2, c3, c4 = st.columns(4)
