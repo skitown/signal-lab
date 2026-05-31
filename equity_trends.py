@@ -697,6 +697,10 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
+    # Compute triggers early so the "See recent real cases" buttons can use them
+    triggers = setup_triggers(close, r, bb)
+    up_mask, down_mask = trend_regime(close)
+
     # ===================== What's Unusual (the heart of Signal Lab) =====================
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, rsi_period):
@@ -725,10 +729,8 @@ def main():
         if reg_now != "undefined":
             st.markdown(f"**Current regime:** {reg_now.capitalize()}")
 
-    # The detailed backtest tables now live inside the "How Similar Setups Have Performed" expander above.
-    # This keeps the initial view much cleaner.
-
-    # Mobile-friendly "See recent real cases" using dialogs (much better on phones)
+        # The actual tables can be added back here later if desired.
+        # For now, the main value is in the narrative + What's Unusual.
     @st.dialog("Recent real cases")
     def show_recent_cases(setup_name: str, signal: pd.Series, horizon: int):
         rec = recent_trigger_returns(close, signal, horizon, k=5)
