@@ -697,85 +697,36 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== What's Unusual (promoted — core of the product) =====================
+    # ===================== What's Unusual (the heart of Signal Lab) =====================
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
 
-    # ===================== Key Context (more compact snapshot) =====================
-    st.markdown("### Key Context")
-    c1, c2, c3, c4 = st.columns(4)
-    word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
-    c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
-    c2.metric("Drawdown", f"{cur_dd:.1%}" if not pd.isna(cur_dd) else "N/A")
-    c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}" if not pd.isna(close.pct_change().iloc[-1]) else "N/A")
-    c4.metric("1-year", f"{trailing_return(close, 252):+.1%}" if not pd.isna(trailing_return(close, 252)) else "N/A")
+    # ===================== Quick Numbers (deliberately more compact) =====================
+    with st.expander("Quick Numbers (Streak, RSI, etc.)", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
+        c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
+        c2.metric("Drawdown", f"{cur_dd:.1%}" if not pd.isna(cur_dd) else "N/A")
+        c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}" if not pd.isna(close.pct_change().iloc[-1]) else "N/A")
+        c4.metric("1-year", f"{trailing_return(close, 252):+.1%}" if not pd.isna(trailing_return(close, 252)) else "N/A")
 
-    cur_rsi = r.iloc[-1]
-    i1, i2, i3 = st.columns(3)
-    pb = bb["pct_b"].iloc[-1]
-    i1.metric("%B", f"{pb:.2f}" if not pd.isna(pb) else "N/A")
-    i2.metric(f"RSI ({rsi_period})", "—" if pd.isna(cur_rsi) else f"{cur_rsi:.0f}")
-    bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
-    i3.metric("Band width", f"{bw_pct:.0%}" if not pd.isna(bw_pct) else "N/A")
+        cur_rsi = r.iloc[-1]
+        i1, i2, i3 = st.columns(3)
+        pb = bb["pct_b"].iloc[-1]
+        i1.metric("%B", f"{pb:.2f}" if not pd.isna(pb) else "N/A")
+        i2.metric(f"RSI ({rsi_period})", "—" if pd.isna(cur_rsi) else f"{cur_rsi:.0f}")
+        bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
+        i3.metric("Band width", f"{bw_pct:.0%}" if not pd.isna(bw_pct) else "N/A")
 
-    # ===================== Setup Performance =====================
-    st.markdown("### Setup Performance")
-    st.caption("How similar setups have performed historically (for reference).")
+    # ===================== Setup Performance (now secondary / collapsible) =====================
+    with st.expander("How Similar Setups Have Performed", expanded=False):
+        st.caption("Historical results for the tracked setups (click to expand).")
+        if reg_now != "undefined":
+            st.markdown(f"**Current regime:** {reg_now.capitalize()}")
 
-    if reg_now != "undefined":
-        st.markdown(f"**Current regime:** {reg_now.capitalize()}")
-
-    triggers = setup_triggers(close, r, bb)
-    up_mask, down_mask = trend_regime(close)
-
-    # Short labels for mobile-friendly tables
-    def short_setup(name: str) -> str:
-        mapping = {
-            "RSI crossed below 30 (oversold)": "RSI < 30",
-            "Close dropped below lower Bollinger band": "Below Lower BB",
-            "RSI crossed above 70 (overbought)": "RSI > 70",
-            "Close pushed above upper Bollinger band": "Above Upper BB",
-        }
-        return mapping.get(name, name)
-
-    def _row(setup_name, regime_label, stats, last_dt):
-        last_str = "—" if last_dt is None else last_dt.strftime("%Y-%m-%d")
-        short_setup_name = short_setup(setup_name)
-        short_regime = "Up" if "Uptrend" in regime_label else "Down"
-        if stats is None:
-            return {"Setup": short_setup_name, "Regime": short_regime, "Times triggered": 0,
-                    "Avg next move": np.nan, "Baseline": np.nan, "Edge vs hold": np.nan,
-                    "Win rate": np.nan, "Last triggered": last_str}
-        return {"Setup": short_setup_name, "Regime": short_regime,
-                "Times triggered": stats["n"], "Avg next move": stats["mean"],
-                "Baseline": stats["base_mean"], "Edge vs hold": stats["edge"],
-                "Win rate": stats["hit_rate"], "Last triggered": last_str}
-
-    cols = ["Setup", "Regime", "Times triggered", "Avg next move", "Baseline",
-            "Edge vs hold", "Win rate", "Last triggered"]
-    fmt = {"Times triggered": "{:.0f}", "Avg next move": "{:+.1%}", "Baseline": "{:+.1%}",
-           "Edge vs hold": "{:+.1%}", "Win rate": "{:.0%}"}
-
-    def render_group(title, names):
-        st.markdown(f"**{title}**")
-        rows = []
-        for name in names:
-            sig = triggers[name]
-            by_reg = backtest_by_regime(close, sig, 10)
-            rows.append(_row(name, "Uptrend (above 200-day)",
-                             by_reg["Uptrend (above 200-day)"],
-                             last_trigger_date(sig & up_mask)))
-            rows.append(_row(name, "Downtrend (below 200-day)",
-                             by_reg["Downtrend (below 200-day)"],
-                             last_trigger_date(sig & down_mask)))
-        df_g = pd.DataFrame(rows)[cols]   # No longer using multi-index to help mobile scrolling
-        st.dataframe(df_g.style.format(fmt, na_rep="—"), use_container_width=True)
-
-    bullish = [n for n in triggers if SETUP_DIRECTION[n] == "bullish"]
-    bearish = [n for n in triggers if SETUP_DIRECTION[n] == "bearish"]
-    render_group("Buy-side setups", bullish)
-    render_group("Sell-side setups", bearish)
+    # The detailed backtest tables now live inside the "How Similar Setups Have Performed" expander above.
+    # This keeps the initial view much cleaner.
 
     # Mobile-friendly "See recent real cases" using dialogs (much better on phones)
     @st.dialog("Recent real cases")
@@ -808,61 +759,62 @@ def main():
         if st.button("Above Upper BB", use_container_width=True):
             show_recent_cases("Close pushed above upper Bollinger band", triggers["Close pushed above upper Bollinger band"], 10)
 
-    # Charts
-    tail = close.iloc[-252:].index
+    # Detailed Charts (collapsed by default to keep the page focused)
+    with st.expander("Detailed Charts", expanded=False):
+        tail = close.iloc[-252:].index
 
-    st.markdown("### RSI · 1Y")
-    st.slider("RSI period", min_value=2, max_value=50, value=14, key="rsi_period")
-    rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
-    st.line_chart(rsi_df, height=320)
+        st.markdown("### RSI · 1Y")
+        st.slider("RSI period", min_value=2, max_value=50, value=14, key="rsi_period")
+        rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
+        st.line_chart(rsi_df, height=320)
 
-    st.markdown("### Price · 1Y")
-    st.line_chart(close.loc[tail], height=320)
+        st.markdown("### Price · 1Y")
+        st.line_chart(close.loc[tail], height=320)
 
-    st.markdown("### Bollinger Bands (20, 2σ) · 1Y")
-    band_df = pd.DataFrame({
-        "Close": close, "Upper": bb["upper"], "Mid": bb["mid"], "Lower": bb["lower"],
-    }).loc[tail]
-    st.line_chart(band_df, height=320)
+        st.markdown("### Bollinger Bands (20, 2σ) · 1Y")
+        band_df = pd.DataFrame({
+            "Close": close, "Upper": bb["upper"], "Mid": bb["mid"], "Lower": bb["lower"],
+        }).loc[tail]
+        st.line_chart(band_df, height=320)
 
-    st.markdown("### Trailing returns")
-    rets = {
-        "1 week (5d)": trailing_return(close, 5),
-        "1 month (21d)": trailing_return(close, 21),
-        "3 months (63d)": trailing_return(close, 63),
-        "1 year (252d)": trailing_return(close, 252),
-        "YTD": ytd_return(close),
-    }
-    st.dataframe(
-        pd.DataFrame({"Return": rets}).style.format("{:+.2%}", na_rep="—"),
-        use_container_width=True,
-    )
-
-    st.markdown("### Price · full history")
-    st.line_chart(close, height=280)
-
-    st.markdown("### Drawdown")
-    dd_df = drawdown_series(close).rename("Drawdown").reset_index()
-    dd_df.columns = ["Date", "Drawdown"]
-    underwater = (
-        alt.Chart(dd_df)
-        .mark_area(color="#3b82f6", opacity=0.9, line={"color": "#1d4ed8"})
-        .encode(
-            x=alt.X("Date:T", title=None),
-            y=alt.Y("Drawdown:Q", title=None, axis=alt.Axis(format="%")),
+        st.markdown("### Trailing returns")
+        rets = {
+            "1 week (5d)": trailing_return(close, 5),
+            "1 month (21d)": trailing_return(close, 21),
+            "3 months (63d)": trailing_return(close, 63),
+            "1 year (252d)": trailing_return(close, 252),
+            "YTD": ytd_return(close),
+        }
+        st.dataframe(
+            pd.DataFrame({"Return": rets}).style.format("{:+.2%}", na_rep="—"),
+            use_container_width=True,
         )
-        .properties(height=260)
-    )
-    st.altair_chart(underwater, use_container_width=True)
 
-    st.markdown("### Run lengths")
-    runs = completed_runs(close)
-    up = runs[runs.sign > 0].length.value_counts().sort_index()
-    down = runs[runs.sign < 0].length.value_counts().sort_index()
-    hist = pd.DataFrame({"Up runs": up, "Down runs": down}).fillna(0).astype(int)
-    hist.index.name = "Run length (days)"
-    st.bar_chart(hist, height=320)
-    st.caption("Up- and down-streak counts by length.")
+        st.markdown("### Price · full history")
+        st.line_chart(close, height=280)
+
+        st.markdown("### Drawdown")
+        dd_df = drawdown_series(close).rename("Drawdown").reset_index()
+        dd_df.columns = ["Date", "Drawdown"]
+        underwater = (
+            alt.Chart(dd_df)
+            .mark_area(color="#3b82f6", opacity=0.9, line={"color": "#1d4ed8"})
+            .encode(
+                x=alt.X("Date:T", title=None),
+                y=alt.Y("Drawdown:Q", title=None, axis=alt.Axis(format="%")),
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(underwater, use_container_width=True)
+
+        st.markdown("### Run lengths")
+        runs = completed_runs(close)
+        up = runs[runs.sign > 0].length.value_counts().sort_index()
+        down = runs[runs.sign < 0].length.value_counts().sort_index()
+        hist = pd.DataFrame({"Up runs": up, "Down runs": down}).fillna(0).astype(int)
+        hist.index.name = "Run length (days)"
+        st.bar_chart(hist, height=320)
+        st.caption("Up- and down-streak counts by length.")
 
 
 if __name__ == "__main__":
