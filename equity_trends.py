@@ -29,7 +29,7 @@ If it stops returning data, swap load_history() for an Alpha Vantage / Tiingo /
 Stooq fetch — the rest of the file doesn't care where the DataFrame comes from.
 """
 
-from __future__ import annotations  # lets type hints like `dict | None` work on Python 3.9
+from __future__ import annotations
 
 import altair as alt
 import numpy as np
@@ -53,20 +53,13 @@ def load_history(ticker: str, period: str = "10y") -> pd.DataFrame:
     if df.empty:
         raise ValueError(f"No data returned for '{ticker}'. Check the symbol.")
     if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)  # drop tz, keep wall-clock dates
+        df.index = df.index.tz_localize(None)
     return df[["Open", "High", "Low", "Close", "Volume"]]
 
 
 # --------------------------- Compute layer ----------------------------
-# Pure functions: no Streamlit, no I/O — so they're trivially testable.
 
 def run_table(close: pd.Series) -> pd.DataFrame:
-    """Per-day run info. A 'run' is a maximal stretch of same-direction days.
-
-    sign:        +1 up day, -1 down day, 0 flat (vs previous close)
-    run_id:      increments each time direction flips
-    run_len:     length of the run *up to and including* this day
-    """
     sign = np.sign(close.diff()).fillna(0)
     run_id = (sign != sign.shift()).cumsum()
     run_len = sign.groupby(run_id).cumcount() + 1
@@ -76,14 +69,11 @@ def run_table(close: pd.Series) -> pd.DataFrame:
 
 
 def completed_runs(close: pd.Series) -> pd.DataFrame:
-    """One row per run: its direction (sign) and its full length."""
     rt = run_table(close)
     return rt.groupby("run_id").agg(sign=("sign", "first"), length=("run_len", "max"))
 
 
 def current_streak(close: pd.Series) -> dict:
-    """Direction + length of the streak ending on the most recent day, plus
-    how many historical same-direction runs reached at least this length."""
     rt = run_table(close)
     sign = int(rt["sign"].iloc[-1])
     length = int(rt["run_len"].iloc[-1])
@@ -95,18 +85,16 @@ def current_streak(close: pd.Series) -> dict:
     return {
         "sign": sign,
         "length": length,
-        "n_at_least": n_at_least,   # incl. the in-progress run
+        "n_at_least": n_at_least,
         "n_runs": n_runs,
     }
 
 
 def drawdown_series(close: pd.Series) -> pd.Series:
-    """Percent below the running all-time-high, as a (<=0) series."""
     return close / close.cummax() - 1.0
 
 
 def days_underwater(close: pd.Series) -> int:
-    """Trading days since the price last sat at a fresh peak (0 if at peak)."""
     dd = drawdown_series(close)
     at_peak = dd >= -1e-12
     if at_peak.iloc[-1]:
@@ -116,7 +104,6 @@ def days_underwater(close: pd.Series) -> int:
 
 
 def trailing_return(close: pd.Series, days: int) -> float:
-    """Simple return over the last `days` *trading* days."""
     if len(close) <= days:
         return np.nan
     return close.iloc[-1] / close.iloc[-1 - days] - 1.0
@@ -131,7 +118,6 @@ def ytd_return(close: pd.Series) -> float:
 
 
 def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
-    """Return (current 20d annualized vol, its percentile vs own history)."""
     ret = close.pct_change()
     rv = ret.rolling(window).std() * np.sqrt(252)
     cur = rv.iloc[-1]
@@ -140,7 +126,6 @@ def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
 
 
 def last_day_z(close: pd.Series) -> float:
-    """Z-score of the most recent daily return vs the full-history distribution."""
     ret = close.pct_change().dropna()
     if ret.std() == 0:
         return 0.0
@@ -148,12 +133,6 @@ def last_day_z(close: pd.Series) -> float:
 
 
 def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> pd.DataFrame:
-    """Standard Bollinger Bands plus the two readings a chart doesn't give you:
-
-    pct_b:     where price sits in the band (1 = upper, 0 = lower, >1 = above it)
-    bandwidth: (upper - lower) / middle — how wide the band is; a low value vs
-               its own history is a 'squeeze' that often precedes a big move.
-    """
     mid = close.rolling(window).mean()
     sd = close.rolling(window).std()
     upper = mid + n_std * sd
@@ -168,8 +147,6 @@ def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> pd.Data
 
 
 def upper_band_walk(close: pd.Series, window: int = 20, n_std: float = 2.0) -> int:
-    """How many consecutive recent closes have sat above the upper band
-    ('walking the band' — the strong-trend behaviour traders watch for)."""
     above = close > bollinger(close, window, n_std)["upper"]
     count = 0
     for val in reversed(above.tolist()):
@@ -181,7 +158,6 @@ def upper_band_walk(close: pd.Series, window: int = 20, n_std: float = 2.0) -> i
 
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """Relative Strength Index using Wilder's smoothing (the standard)."""
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -192,31 +168,22 @@ def rsi(close: pd.Series, period: int = 14) -> pd.Series:
 
 
 def percentile_of(series: pd.Series, value: float) -> float:
-    """Fraction of historical values at or below `value` (0..1)."""
     s = series.dropna()
     return float((s <= value).mean()) if len(s) else float("nan")
 
 
 # ---------------------- Conditional backtest engine --------------------
-# The honest core of "edge finding": for a setup, what happened NEXT, and did
-# it beat simply holding the stock over the same horizon? We count a setup only
-# on the day it TRIGGERS (crosses into true) to avoid double-counting the same
-# event, and always compare to a baseline so a stock's general drift doesn't
-# masquerade as a signal.
 
-MIN_OCCURRENCES = 20   # below this, we say "too few to judge" rather than pretend
-SIGNAL_HORIZON = 10    # trading days ahead used for the live "setup active" flags
+MIN_OCCURRENCES = 20
+SIGNAL_HORIZON = 10
 
 
 def becomes_true(cond: pd.Series) -> pd.Series:
-    """True only on the day a condition flips from false to true (the trigger)."""
     return cond & ~cond.shift(1, fill_value=False)
 
 
 def setup_triggers(close: pd.Series, rsi_series: pd.Series,
                    bb: pd.DataFrame) -> dict[str, pd.Series]:
-    """The canonical, widely-watched setups — deliberately few, to avoid the
-    data-mining trap of testing dozens and cherry-picking the luckiest."""
     return {
         "RSI crossed below 30 (oversold)": becomes_true(rsi_series < 30),
         "RSI crossed above 70 (overbought)": becomes_true(rsi_series > 70),
@@ -226,7 +193,6 @@ def setup_triggers(close: pd.Series, rsi_series: pd.Series,
 
 
 def forward_returns(close: pd.Series, signal: pd.Series, horizon: int) -> np.ndarray:
-    """Return over `horizon` days following each trigger day."""
     vals = close.to_numpy()
     n = len(vals)
     idx = np.flatnonzero(signal.to_numpy())
@@ -236,9 +202,6 @@ def forward_returns(close: pd.Series, signal: pd.Series, horizon: int) -> np.nda
 
 def baseline_forward(close: pd.Series, horizon: int,
                      mask: pd.Series | None = None) -> np.ndarray:
-    """Overlapping `horizon`-day returns — the 'just hold it' comparison. With a
-    mask, only days where mask is True start a baseline window (used to build a
-    regime-matched baseline, e.g. 'all uptrend days')."""
     vals = close.to_numpy()
     n = len(vals)
     if mask is None:
@@ -249,8 +212,6 @@ def baseline_forward(close: pd.Series, horizon: int,
 
 def backtest_setup(close: pd.Series, signal: pd.Series, horizon: int,
                    baseline_mask: pd.Series | None = None) -> dict | None:
-    """Conditional forward-return stats vs baseline. None if it never triggered.
-    `baseline_mask` lets the baseline be regime-matched instead of all-days."""
     fwd = forward_returns(close, signal, horizon)
     if len(fwd) == 0:
         return None
@@ -263,14 +224,11 @@ def backtest_setup(close: pd.Series, signal: pd.Series, horizon: int,
         "median": float(np.median(fwd)),
         "base_hit": float((base > 0).mean()) if len(base) else float("nan"),
         "base_mean": base_mean,
-        "edge": float(fwd.mean() - base_mean),  # excess over holding (same regime)
+        "edge": float(fwd.mean() - base_mean),
     }
 
 
 def trend_regime(close: pd.Series, window: int = 200) -> tuple[pd.Series, pd.Series]:
-    """Boolean masks (uptrend, downtrend) by price vs its `window`-day average.
-    Both are False before the average is defined, so those early days are simply
-    left unclassified rather than mislabelled."""
     sma = close.rolling(window).mean()
     defined = sma.notna()
     up = (close > sma) & defined
@@ -279,7 +237,6 @@ def trend_regime(close: pd.Series, window: int = 200) -> tuple[pd.Series, pd.Ser
 
 
 def current_regime(close: pd.Series, window: int = 200) -> str:
-    """'uptrend' / 'downtrend' / 'undefined' for the most recent bar."""
     up, down = trend_regime(close, window)
     if up.iloc[-1]:
         return "uptrend"
@@ -290,8 +247,6 @@ def current_regime(close: pd.Series, window: int = 200) -> str:
 
 def backtest_by_regime(close: pd.Series, signal: pd.Series, horizon: int,
                        window: int = 200) -> dict[str, dict | None]:
-    """Same setup, split by trend regime, each vs its OWN regime's baseline — so
-    'worked in uptrends' can't just be 'uptrends drift up'."""
     up, down = trend_regime(close, window)
     return {
         "All": backtest_setup(close, signal, horizon),
@@ -300,27 +255,22 @@ def backtest_by_regime(close: pd.Series, signal: pd.Series, horizon: int,
     }
 
 
-# Which way each setup is conventionally "looking" — used only to GROUP the
-# report into buy-side / sell-side. The actual lean is decided by measured edge.
 SETUP_DIRECTION = {
     "RSI crossed below 30 (oversold)": "bullish",
     "Close dropped below lower Bollinger band": "bullish",
     "RSI crossed above 70 (overbought)": "bearish",
     "Close pushed above upper Bollinger band": "bearish",
 }
-PROPOSAL_LOOKBACK = 5  # a setup counts as "live" if it fired within this many sessions
+PROPOSAL_LOOKBACK = 5
 
 
 def last_trigger_date(signal: pd.Series):
-    """Most recent date the signal fired, or None."""
     hits = signal[signal]
     return hits.index[-1] if len(hits) else None
 
 
 def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int,
                            k: int = 6) -> pd.DataFrame:
-    """The last `k` trigger dates and the move over the following `horizon` days,
-    so you can pull up a chart and eyeball the actual instances."""
     vals = close.to_numpy()
     n = len(vals)
     idx = np.flatnonzero(signal.to_numpy())
@@ -334,16 +284,12 @@ def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int,
 
 def build_trade_idea(close: pd.Series, rsi_series: pd.Series,
                      bb: pd.DataFrame) -> tuple[str, int, list[str]]:
-    """Aggregate the directional signals into a transparent Bullish / Neutral /
-    Bearish lean. Every component is returned as a reason, so it stays a readout
-    you can sanity-check — not a black-box oracle. NOT advice."""
     regime = current_regime(close)
     reg_key = {"uptrend": "Uptrend (above 200-day)",
                "downtrend": "Downtrend (below 200-day)"}.get(regime, "All")
     reasons: list[str] = []
     score = 0
 
-    # 1) Trend backdrop — price vs its 200-day average.
     if regime == "uptrend":
         score += 1
         reasons.append("🟢 **Trend:** above the 200-day average (uptrend backdrop).")
@@ -351,7 +297,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series,
         score -= 1
         reasons.append("🔴 **Trend:** below the 200-day average (downtrend backdrop).")
 
-    # 2) Medium-term momentum — trailing ~3 months.
     m3 = trailing_return(close, 63)
     if not np.isnan(m3):
         if m3 > 0:
@@ -361,7 +306,6 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series,
             score -= 1
             reasons.append(f"🔴 **Momentum:** {m3:+.0%} over the last ~3 months.")
 
-    # 3) Setups that fired recently, weighted by their measured same-regime history.
     for name, sig in setup_triggers(close, rsi_series, bb).items():
         if not bool(sig.iloc[-PROPOSAL_LOOKBACK:].any()):
             continue
@@ -392,16 +336,13 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series,
 
 
 # ------------------------- Findings heuristics -------------------------
-# Transparent, descriptive flags. The panel stays quiet unless something
-# clears these bars — tune them here, no magic buried in the logic.
 
-STREAK_MIN = 4        # only flag streaks at least this long
-DRAWDOWN_MIN = -0.05  # only mention drawdowns at least this deep (-5%)
-TAIL = 0.10           # "unusual" = sitting in this fraction of the tail
+STREAK_MIN = 4
+DRAWDOWN_MIN = -0.05
+TAIL = 0.10
 
 
 def _plural(n: int, unit: str) -> str:
-    """'1 day' vs '4 days' — no more '1 days'."""
     return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
 
 
@@ -409,7 +350,6 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
     findings = []
     dd = drawdown_series(close)
 
-    # Streak: only interesting once it's run a while. A 1-day streak is noise.
     streak = current_streak(close)
     if streak["sign"] != 0 and streak["length"] >= STREAK_MIN and streak["n_runs"] > 0:
         word = "up" if streak["sign"] > 0 else "down"
@@ -419,9 +359,8 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
                f"window have reached that length.")
         findings.append(("⚠️" if share <= TAIL else "•", msg))
 
-    # Drawdown: only when it's both genuinely deep AND deep relative to its history.
     cur_dd = dd.iloc[-1]
-    worse_share = float((dd.dropna() < cur_dd).mean())  # fraction of days deeper
+    worse_share = float((dd.dropna() < cur_dd).mean())
     if cur_dd <= DRAWDOWN_MIN and worse_share <= TAIL:
         uw = days_underwater(close)
         findings.append(("⚠️",
@@ -442,7 +381,6 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
         findings.append(("⚠️", f"The most recent day was a {z:+.1f}-sigma move — "
                               f"a statistical outlier."))
 
-    # Bollinger: squeeze (tight bands) and walking the upper band.
     bb = bollinger(close)
     bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
     if bw_pct <= TAIL:
@@ -455,7 +393,6 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
                              f"closes above the upper Bollinger band, the strong-uptrend "
                              f"behaviour. (Not a forecast — strong trends also end.)"))
 
-    # RSI: only when stretched, and reported with how rare that reading is.
     r = rsi(close, rsi_period)
     cur_rsi = r.iloc[-1]
     if pd.notna(cur_rsi):
@@ -467,13 +404,11 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
             findings.append(("⚠️", f"RSI is {cur_rsi:.0f} (oversold territory) — "
                                   f"lower than on {1 - rsi_pct:.0%} of days in this window."))
 
-    # Live "setup just triggered" flags, each carrying its historical edge —
-    # measured within the CURRENT trend regime, since that's what's in force now.
     regime = current_regime(close)
     bt_signals = setup_triggers(close, r, bb)
     for name, sig in bt_signals.items():
         if not bool(sig.iloc[-1]):
-            continue  # didn't trigger today
+            continue
         by_reg = backtest_by_regime(close, sig, SIGNAL_HORIZON)
         reg_key = {"uptrend": "Uptrend (above 200-day)",
                    "downtrend": "Downtrend (below 200-day)"}.get(regime, "All")
@@ -508,80 +443,39 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
 
 # ------------------------------- UI ------------------------------------
 
-
 def _run_search() -> None:
-    """Set the active ticker from the search box — fired by Enter or the Search button."""
     st.session_state.active_ticker = st.session_state.ticker.strip().upper()
 
 
 def main():
     st.set_page_config(page_title="Signal Lab", layout="wide")
-    # Layout CSS. Streamlit keeps columns side-by-side on phones; we wrap them 2-up
-    # below 640px — EXCEPT the search row, which must always stay one line.
+
+    # ===================== MINIMAL, MAINTAINABLE CSS =====================
     st.markdown(
         """
         <style>
         @media (max-width: 640px) {
           .block-container,
           [data-testid="stMainBlockContainer"],
-          [data-testid="stAppViewBlockContainer"] { padding: 2.5rem 0.9rem 3rem !important; }
-          /* Wrap column rows 2-up — but not the search row (it has the text input).
-             Columns targeted as direct children (> div) so this doesn't depend on the
-             column element's testid, which Streamlit has renamed across versions. */
-          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) {
-            flex-wrap: wrap !important;
-            gap: 0.5rem !important;
-          }
-          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) > div {
-            flex: 1 1 calc(50% - 0.5rem) !important;
-            min-width: calc(50% - 0.5rem) !important;
+          [data-testid="stAppViewBlockContainer"] {
+            padding: 2.5rem 0.9rem 3rem !important;
           }
           div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
-        /* Every column can shrink — prevents horizontal overflow / cut-off buttons. */
-        div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
-        /* Search row: field fills remaining space, button keeps its natural width,
-           never wraps or gets pushed off-screen. */
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) {
-          flex-wrap: nowrap !important;
-          gap: 0.5rem !important;
-          align-items: center !important;
-          max-width: 360px !important;  /* narrow, fixed — fits every screen. Tweak this number. */
+
+        div[data-testid="stDataFrame"] > div {
+          overflow-x: auto;
         }
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:first-child {
-          flex: 1 1 0% !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:last-child {
-          flex: 0 0 auto !important;
-        }
-        /* Let the input itself shrink to 0 so the button is never clipped off-screen. */
-        [data-testid="stTextInput"],
-        [data-testid="stTextInput"] > div,
-        [data-testid="stTextInput"] input {
-          min-width: 0 !important;
-        }
+
         div[data-testid="stButton"] button {
           white-space: nowrap !important;
-          padding-left: 0.85rem !important;
-          padding-right: 0.85rem !important;
-        }
-        /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
-        div[data-testid="stDataFrame"] > div { overflow-x: auto; }
-        /* Search button green (config.toml themes it too; this is belt-and-suspenders). */
-        div[data-testid="stButton"] button {
-          background-color: #16a34a !important;
-          border-color: #16a34a !important;
-          color: #fff !important;
-        }
-        div[data-testid="stButton"] button:hover {
-          background-color: #15803d !important;
-          border-color: #15803d !important;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
     st.markdown(
         "<div style='font-size:0.8rem;color:#888;font-weight:600;letter-spacing:.5px;"
         "margin-bottom:4px'>SIGNAL LAB "
@@ -596,21 +490,29 @@ def main():
     if "rsi_period" not in st.session_state:
         st.session_state.rsi_period = 14
 
-    # Search lives in the page body. Plain input + button (no st.form) so there's
-    # no "Press Enter to submit form" hint; Enter or the button runs the search.
-    sc1, sc2 = st.columns([5, 1])
-    sc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
-                   placeholder="Search for tickers", on_change=_run_search)
-    sc2.button("Search", type="primary", on_click=_run_search)
+    # ===================== CLEAN SEARCH ROW =====================
+    search_col, btn_col = st.columns([5.5, 1.35], vertical_alignment="bottom")
 
-    rsi_period = st.session_state.rsi_period  # set by the slider down at the RSI chart
+    with search_col:
+        st.text_input(
+            "Ticker",
+            key="ticker",
+            label_visibility="collapsed",
+            placeholder="Search for tickers (e.g. AAPL, NVDA)",
+            on_change=_run_search,
+        )
+
+    with btn_col:
+        st.button("Search", type="primary", on_click=_run_search, use_container_width=True)
+
+    rsi_period = st.session_state.rsi_period
     ticker = st.session_state.active_ticker
     if not ticker:
         return
 
     try:
         df = load_history(ticker, "max")
-    except Exception as e:  # noqa: BLE001 — surface any fetch/parse error plainly
+    except Exception as e:
         st.error(f"Could not load '{ticker}': {e}")
         return
 
@@ -624,12 +526,10 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Core indicators computed once, up front — everything below reuses them.
     bb = bollinger(close)
     r = rsi(close, rsi_period)
     reg_now = current_regime(close)
 
-    # --- TRADE IDEA: the verdict, big and first. ---
     verdict, score, reasons = build_trade_idea(close, r, bb)
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
@@ -644,7 +544,6 @@ def main():
         st.markdown(line)
     st.caption("Not financial advice.")
 
-    # --- Snapshot strip: quick orientation ---
     c1, c2, c3, c4 = st.columns(4)
     streak = current_streak(close)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
@@ -664,7 +563,6 @@ def main():
     i3.metric("Band width", f"{bw_pct:.0%}",
               help="Where band width sits in its own history. Low = a squeeze.")
 
-    # --- Backtested setups: the evidence behind the verdict ---
     st.markdown("### Setup backtests")
     st.caption("Forward return after each historical trigger, vs. just holding.")
     if reg_now != "undefined":
@@ -736,12 +634,10 @@ def main():
                     use_container_width=True, hide_index=True,
                 )
 
-    # --- What's unusual right now (situational context) ---
     st.markdown("### What's unusual")
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
 
-    # --- Indicator charts (supporting visual), full width, RSI first ---
     tail = close.iloc[-252:].index
 
     st.markdown("### RSI · 1Y")
@@ -751,8 +647,6 @@ def main():
     rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
     st.line_chart(rsi_df, height=320)
 
-    # Price in the SAME window, directly beneath RSI, so the x-axes align and you
-    # can eyeball divergences (price high vs RSI not confirming, and vice versa).
     st.markdown("### Price · 1Y")
     st.line_chart(close.loc[tail], height=320)
 
@@ -762,7 +656,6 @@ def main():
     }).loc[tail]
     st.line_chart(band_df, height=320)
 
-    # --- Trailing returns ---
     st.markdown("### Trailing returns")
     rets = {
         "1 week (5d)": trailing_return(close, 5),
@@ -776,7 +669,6 @@ def main():
         use_container_width=True,
     )
 
-    # --- Supporting charts: full width, stacked ---
     st.markdown("### Price · full history")
     st.line_chart(close, height=280)
 
@@ -788,8 +680,6 @@ def main():
         .mark_area(color="#3b82f6", opacity=0.9, line={"color": "#1d4ed8"})
         .encode(
             x=alt.X("Date:T", title=None),
-            # mark_area fills between the line and the 0 baseline, so the colored
-            # region is the drawdown itself, hanging DOWN from zero (the fix).
             y=alt.Y("Drawdown:Q", title=None, axis=alt.Axis(format="%")),
         )
         .properties(height=260)
