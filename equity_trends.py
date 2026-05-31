@@ -584,8 +584,14 @@ def main():
           div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
+        /* Stronger horizontal scroll for tables on mobile */
+        div[data-testid="stDataFrame"] {
+          overflow-x: auto !important;
+          -webkit-overflow-scrolling: touch;
+        }
         div[data-testid="stDataFrame"] > div {
-          overflow-x: auto;
+          overflow-x: auto !important;
+          min-width: 100%;
         }
         div[data-testid="stButton"] button {
           white-space: nowrap !important;
@@ -717,13 +723,25 @@ def main():
     triggers = setup_triggers(close, r, bb)
     up_mask, down_mask = trend_regime(close)
 
+    # Short labels for mobile-friendly tables
+    def short_setup(name: str) -> str:
+        mapping = {
+            "RSI crossed below 30 (oversold)": "RSI < 30",
+            "Close dropped below lower Bollinger band": "Below Lower BB",
+            "RSI crossed above 70 (overbought)": "RSI > 70",
+            "Close pushed above upper Bollinger band": "Above Upper BB",
+        }
+        return mapping.get(name, name)
+
     def _row(setup_name, regime_label, stats, last_dt):
         last_str = "—" if last_dt is None else last_dt.strftime("%Y-%m-%d")
+        short_setup_name = short_setup(setup_name)
+        short_regime = "Up" if "Uptrend" in regime_label else "Down"
         if stats is None:
-            return {"Setup": setup_name, "Regime": regime_label, "Times triggered": 0,
+            return {"Setup": short_setup_name, "Regime": short_regime, "Times triggered": 0,
                     "Avg next move": np.nan, "Baseline": np.nan, "Edge vs hold": np.nan,
                     "Win rate": np.nan, "Last triggered": last_str}
-        return {"Setup": setup_name, "Regime": regime_label,
+        return {"Setup": short_setup_name, "Regime": short_regime,
                 "Times triggered": stats["n"], "Avg next move": stats["mean"],
                 "Baseline": stats["base_mean"], "Edge vs hold": stats["edge"],
                 "Win rate": stats["hit_rate"], "Last triggered": last_str}
@@ -745,7 +763,7 @@ def main():
             rows.append(_row(name, "Downtrend (below 200-day)",
                              by_reg["Downtrend (below 200-day)"],
                              last_trigger_date(sig & down_mask)))
-        df_g = pd.DataFrame(rows)[cols].set_index(["Setup", "Regime"])
+        df_g = pd.DataFrame(rows)[cols]   # No longer using multi-index to help mobile scrolling
         st.dataframe(df_g.style.format(fmt, na_rep="—"), use_container_width=True)
 
     bullish = [n for n in triggers if SETUP_DIRECTION[n] == "bullish"]
