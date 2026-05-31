@@ -1,14 +1,16 @@
 """
-Signal Lab - Clean Rollback Version
-===================================
+Signal Lab - Stable Full Version
+================================
 
-This is a stable rollback with the key improvements you liked:
+This is a complete, self-contained working version with:
 - Company name under ticker
-- Defensive language for overbought conditions in strong trends (the note about structural demand shifts)
+- Defensive narrative language for regime shifts
+- Rich "What's Unusual" section
+- Full Setup Performance tables (with short mobile-friendly labels)
+- Working "See recent real cases" using dialogs
+- Metrics and backtests in collapsed expanders
 - Stronger disclaimer
-- All functions properly defined and returning correct types
-
-Reverted to a simpler, more reliable structure to stop the breakage.
+- All functions and constants properly defined at module level to avoid NameErrors
 """
 
 from __future__ import annotations
@@ -22,6 +24,18 @@ try:
     import yfinance as yf
 except ImportError:
     yf = None
+
+
+# ----------------------------- Constants -----------------------------
+MIN_OCCURRENCES = 10
+SIGNAL_HORIZON = 10
+
+SETUP_DIRECTION = {
+    "RSI crossed below 30 (oversold)": "bullish",
+    "Close dropped below lower Bollinger band": "bullish",
+    "RSI crossed above 70 (overbought)": "bearish",
+    "Close pushed above upper Bollinger band": "bearish",
+}
 
 
 # ----------------------------- Data layer -----------------------------
@@ -40,7 +54,6 @@ def load_history(ticker: str, period: str = "10y") -> pd.DataFrame:
 
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def get_company_name(ticker: str) -> str:
-    """Fetch company name from Yahoo (longName preferred). Cached 24h."""
     if yf is None:
         return ""
     try:
@@ -76,8 +89,30 @@ def drawdown_series(close: pd.Series) -> pd.Series:
     return close / close.cummax() - 1.0
 
 
+def days_underwater(close: pd.Series) -> int:
+    dd = drawdown_series(close)
+    at_peak = dd >= -1e-12
+    if at_peak.iloc[-1]:
+        return 0
+    last_peak = at_peak[at_peak].index.max()
+    return int((close.index > last_peak).sum())
+
+
+def trailing_return(close: pd.Series, days: int) -> float:
+    if len(close) <= days:
+        return np.nan
+    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+
+
+def ytd_return(close: pd.Series) -> float:
+    yr = close.index[-1].year
+    this_year = close[close.index.year == yr]
+    if len(this_year) < 2:
+        return np.nan
+    return this_year.iloc[-1] / this_year.iloc[0] - 1.0
+
+
 def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
-    """Returns (current annualized vol, its percentile vs own history)"""
     ret = close.pct_change()
     rv = ret.rolling(window).std() * np.sqrt(252)
     cur = rv.iloc[-1]
@@ -101,6 +136,17 @@ def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> pd.Data
     return pd.DataFrame({"mid": mid, "upper": upper, "lower": lower, "bandwidth": bandwidth}, index=close.index)
 
 
+def upper_band_walk(close: pd.Series, window: int = 20, n_std: float = 2.0) -> int:
+    above = close > bollinger(close, window, n_std)["upper"]
+    count = 0
+    for val in reversed(above.tolist()):
+        if val:
+            count += 1
+        else:
+            break
+    return count
+
+
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -111,6 +157,11 @@ def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     return (100 - 100 / (1 + rs)).rename("rsi")
 
 
+def percentile_of(series: pd.Series, value: float) -> float:
+    s = series.dropna()
+    return float((s <= value).mean()) if len(s) else float("nan")
+
+
 def current_regime(close: pd.Series, window: int = 200) -> str:
     sma = close.rolling(window).mean()
     if pd.isna(sma.iloc[-1]):
@@ -118,24 +169,94 @@ def current_regime(close: pd.Series, window: int = 200) -> str:
     return "uptrend" if close.iloc[-1] > sma.iloc[-1] else "downtrend"
 
 
-def trailing_return(close: pd.Series, days: int) -> float:
-    if len(close) <= days:
-        return np.nan
-    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+# ---------------------- Setup triggers & backtests ----------------------
+
+def becomes_true(cond: pd.Series) -> pd.Series:
+    return cond & ~cond.shift(1, fill_value=False)
 
 
-# ---------------------- Narrative (with defensive language) ----------------------
+def setup_triggers(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) -> dict[str, pd.Series]:
+    return {
+        "RSI crossed below 30 (oversold)": becomes_true(rsi_series < 30),
+        "RSI crossed above 70 (overbought)": becomes_true(rsi_series > 70),
+        "Close dropped below lower Bollinger band": becomes_true(close < bb["lower"]),
+        "Close pushed above upper Bollinger band": becomes_true(close > bb["upper"]),
+    }
+
+
+def forward_returns(close: pd.Series, signal: pd.Series, horizon: int) -> np.ndarray:
+    vals = close.to_numpy()
+    n = len(vals)
+    idx = np.flatnonzero(signal.to_numpy())
+    return np.array([vals[i + horizon] / vals[i] - 1 for i in idx if i + horizon < n])
+
+
+def baseline_forward(close: pd.Series, horizon: int, mask: pd.Series | None = None) -> np.ndarray:
+    vals = close.to_numpy()
+    n = len(vals)
+    if mask is None:
+        return vals[horizon:] / vals[:-horizon] - 1
+    idx = np.flatnonzero(mask.to_numpy())
+    return np.array([vals[i + horizon] / vals[i] - 1 for i in idx if i + horizon < n])
+
+
+def backtest_setup(close: pd.Series, signal: pd.Series, horizon: int, baseline_mask: pd.Series | None = None) -> dict | None:
+    fwd = forward_returns(close, signal, horizon)
+    if len(fwd) == 0:
+        return None
+    base = baseline_forward(close, horizon, baseline_mask)
+    base_mean = float(base.mean()) if len(base) else float("nan")
+    return {
+        "n": int(len(fwd)),
+        "hit_rate": float((fwd > 0).mean()),
+        "mean": float(fwd.mean()),
+        "median": float(np.median(fwd)),
+        "base_hit": float((base > 0).mean()) if len(base) else float("nan"),
+        "base_mean": base_mean,
+        "edge": float(fwd.mean() - base_mean),
+    }
+
+
+def trend_regime(close: pd.Series, window: int = 200) -> tuple[pd.Series, pd.Series]:
+    sma = close.rolling(window).mean()
+    defined = sma.notna()
+    up = (close > sma) & defined
+    down = (close <= sma) & defined
+    return up, down
+
+
+def backtest_by_regime(close: pd.Series, signal: pd.Series, horizon: int, window: int = 200) -> dict[str, dict | None]:
+    up, down = trend_regime(close, window)
+    return {
+        "All": backtest_setup(close, signal, horizon),
+        "Uptrend (above 200-day)": backtest_setup(close, signal & up, horizon, up),
+        "Downtrend (below 200-day)": backtest_setup(close, signal & down, horizon, down),
+    }
+
+
+def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int, k: int = 5) -> pd.DataFrame:
+    vals = close.to_numpy()
+    n = len(vals)
+    idx = np.flatnonzero(signal.to_numpy())
+    rows = []
+    for i in idx[-k:]:
+        fwd = vals[i + horizon] / vals[i] - 1 if i + horizon < n else np.nan
+        rows.append({"Trigger date": close.index[i].strftime("%Y-%m-%d"),
+                     f"Move over next {horizon}d": fwd})
+    return pd.DataFrame(rows)
+
+
+# ---------------------- Narrative ----------------------
 
 def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
 
-    # Strong trend + stretched conditions (the key defensive case for names like MU)
     if regime == "uptrend" and streak_len >= 5 and (last_rsi > 72 or abs(last_z) > 2.0):
         summary = ("Strong bullish trend and momentum, but conditions have become statistically stretched. "
                    "RSI is deeply overbought and the move is extended by historical standards. "
                    "In a normal environment this would often lead to digestion or reversal risk. "
-                   "However, if the fundamental demand picture has structurally improved (e.g. new multi-year growth driver), "
+                   "However, if the fundamental demand picture has structurally improved, "
                    "the historical ranges may be less predictive than usual.")
         observations = [
             f"Extreme overbought reading: RSI at {last_rsi:.0f}.",
@@ -157,7 +278,7 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
     return {"summary": summary, "observations": observations, "bucket": "quiet_or_mixed"}
 
 
-# ---------------------- Verdict logic (with defensive note) ----------------------
+# ---------------------- Verdict ----------------------
 
 def build_trade_idea(close, rsi_series, bb):
     regime = current_regime(close)
@@ -192,7 +313,11 @@ def build_trade_idea(close, rsi_series, bb):
     return verdict, score, reasons, 0, 0
 
 
-# ------------------------- Findings (simplified but stable) -------------------------
+# ------------------------- Findings -------------------------
+
+def _plural(n: int, unit: str) -> str:
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
+
 
 def build_findings(close, rsi_period=14):
     findings = []
@@ -200,19 +325,50 @@ def build_findings(close, rsi_period=14):
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
     last_rsi = rsi(close, rsi_period).iloc[-1]
+    bb = bollinger(close)
+    z = last_day_z(close)
 
-    if streak["length"] >= 4:
+    if streak["length"] >= 4 and streak["n_runs"] > 0:
+        share = streak["n_at_least"] / streak["n_runs"]
         word = "up" if streak["sign"] > 0 else "down"
-        findings.append(("•", f"On a {streak['length']}-day {word} streak."))
+        marker = "⚠️" if share <= 0.10 else "•"
+        findings.append((marker, f"On a {streak['length']}-day {word} streak — {streak['n_at_least']} of {streak['n_runs']} {word}-runs have reached that length."))
 
-    if abs(dd.iloc[-1]) > 0.05:
-        findings.append(("•", f"Drawdown of {abs(dd.iloc[-1]):.1%} from peak."))
+    cur_dd = dd.iloc[-1]
+    worse_share = float((dd.dropna() < cur_dd).mean())
+    if cur_dd <= -0.05 and worse_share <= 0.10:
+        uw = days_underwater(close)
+        findings.append(("⚠️", f"Down {abs(cur_dd):.1%} from peak ({_plural(uw, 'trading day')} underwater) — among its deepest stretches."))
 
-    if vp > 0.8:
-        findings.append(("⚠️", f"Volatility ({cur_vol:.0%} annualized) is in the top 20% of its history — stormy regime."))
+    if vp >= 0.9:
+        findings.append(("⚠️", f"Volatility ({cur_vol:.0%} annualized) is in the top 10% of its history — stormy regime."))
+    elif vp <= 0.1:
+        findings.append(("•", f"Volatility is unusually calm (bottom 10%)."))
 
-    if last_rsi > 70:
-        findings.append(("⚠️", f"RSI is {last_rsi:.0f} (overbought territory)."))
+    if abs(z) >= 2.5:
+        findings.append(("⚠️", f"The most recent day was a {z:+.1f}-sigma move — statistical outlier."))
+
+    bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
+    if bw_pct <= 0.1:
+        findings.append(("⚠️", f"Bollinger squeeze — bands tighter than 90% of history. Often precedes a sharp move."))
+
+    walk = upper_band_walk(close)
+    if walk >= 3:
+        findings.append(("•", f"'Walking the upper band' — {walk} days of closes above the upper Bollinger band (strong trend behavior)."))
+
+    if last_rsi >= 70:
+        rsi_pct = percentile_of(rsi(close, rsi_period), last_rsi)
+        findings.append(("⚠️", f"RSI is {last_rsi:.0f} (overbought) — higher than on {rsi_pct:.0%} of days."))
+    elif last_rsi <= 30:
+        findings.append(("⚠️", f"RSI is {last_rsi:.0f} (oversold)."))
+
+    win = close.iloc[-252:]
+    from_hi = close.iloc[-1] / win.max() - 1
+    from_lo = close.iloc[-1] / win.min() - 1
+    if from_hi >= -0.005:
+        findings.append(("•", "At or near a fresh 52-week high."))
+    elif from_lo <= 0.01:
+        findings.append(("•", "At or near a 52-week low."))
 
     if not findings:
         findings.append(("•", "Nothing notably unusual right now."))
@@ -316,7 +472,7 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # What's Unusual
+    # What's Unusual (rich)
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, st.session_state.rsi_period):
         st.markdown(f"{marker} {text}")
@@ -330,29 +486,80 @@ def main():
         c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}")
         c4.metric("1-year", f"{trailing_return(close, 252):+.1%}")
 
-    # Setup Performance (collapsed)
+    # Setup Performance (full tables inside expander)
     with st.expander("How Similar Setups Have Performed", expanded=False):
-        st.write("Backtest tables would appear here in a fuller version.")
+        st.caption("Historical results for the tracked setups.")
+        if reg_now != "undefined":
+            st.markdown(f"**Current regime:** {reg_now.capitalize()}")
 
-    # See recent real cases (mobile friendly)
+        triggers = setup_triggers(close, r, bb)
+
+        def short_setup(name: str) -> str:
+            mapping = {
+                "RSI crossed below 30 (oversold)": "RSI < 30",
+                "Close dropped below lower Bollinger band": "Below Lower BB",
+                "RSI crossed above 70 (overbought)": "RSI > 70",
+                "Close pushed above upper Bollinger band": "Above Upper BB",
+            }
+            return mapping.get(name, name)
+
+        def _row(setup_name, regime_label, stats, last_dt):
+            last_str = "—" if last_dt is None else last_dt.strftime("%Y-%m-%d")
+            short_name = short_setup(setup_name)
+            short_reg = "Up" if "Uptrend" in regime_label else "Down"
+            if stats is None:
+                return {"Setup": short_name, "Regime": short_reg, "Times": 0,
+                        "Avg Move": np.nan, "Baseline": np.nan, "Edge": np.nan, "Win %": np.nan}
+            return {"Setup": short_name, "Regime": short_reg,
+                    "Times": stats["n"], "Avg Move": stats["mean"],
+                    "Baseline": stats["base_mean"], "Edge": stats["edge"],
+                    "Win %": stats["hit_rate"]}
+
+        cols = ["Setup", "Regime", "Times", "Avg Move", "Baseline", "Edge", "Win %"]
+        fmt = {"Times": "{:.0f}", "Avg Move": "{:+.1%}", "Baseline": "{:+.1%}",
+               "Edge": "{:+.1%}", "Win %": "{:.0%}"}
+
+        def render_group(title, names):
+            st.markdown(f"**{title}**")
+            rows = []
+            for name in names:
+                sig = triggers[name]
+                by_reg = backtest_by_regime(close, sig, 10)
+                rows.append(_row(name, "Uptrend (above 200-day)", by_reg["Uptrend (above 200-day)"], None))
+                rows.append(_row(name, "Downtrend (below 200-day)", by_reg["Downtrend (below 200-day)"], None))
+            df_g = pd.DataFrame(rows)[cols]
+            st.dataframe(df_g.style.format(fmt, na_rep="—"), use_container_width=True)
+
+        bullish = [n for n in triggers if SETUP_DIRECTION.get(n) == "bullish"]
+        bearish = [n for n in triggers if SETUP_DIRECTION.get(n) == "bearish"]
+        render_group("Buy-side setups", bullish)
+        render_group("Sell-side setups", bearish)
+
+    # See recent real cases (functional)
     @st.dialog("Recent real cases")
-    def show_recent_cases(setup_name):
-        st.write(f"Recent examples for {setup_name} would appear here (demo mode).")
+    def show_recent_cases(setup_name, signal):
+        rec = recent_trigger_returns(close, signal, 10, k=5)
+        st.markdown(f"**{setup_name}** — Last 5 times + what happened next")
+        if rec.empty:
+            st.write("No recent triggers found.")
+        else:
+            for _, row in rec.iterrows():
+                st.write(f"**{row['Trigger date']}** → **{row['Move over next 10d']:+.1%}**")
 
     st.markdown("### See recent real cases")
-    st.caption("Tap to view actual recent examples.")
+    st.caption("Tap a button to see the actual recent dates a setup triggered and the return that followed.")
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("RSI < 30 examples", use_container_width=True):
-            show_recent_cases("RSI < 30")
-        if st.button("Below Lower BB examples", use_container_width=True):
-            show_recent_cases("Below Lower BB")
+        if st.button("RSI < 30", use_container_width=True):
+            show_recent_cases("RSI crossed below 30 (oversold)", triggers["RSI crossed below 30 (oversold)"])
+        if st.button("Below Lower BB", use_container_width=True):
+            show_recent_cases("Close dropped below lower Bollinger band", triggers["Close dropped below lower Bollinger band"])
     with col2:
-        if st.button("RSI > 70 examples", use_container_width=True):
-            show_recent_cases("RSI > 70")
-        if st.button("Above Upper BB examples", use_container_width=True):
-            show_recent_cases("Above Upper BB")
+        if st.button("RSI > 70", use_container_width=True):
+            show_recent_cases("RSI crossed above 70 (overbought)", triggers["RSI crossed above 70 (overbought)"])
+        if st.button("Above Upper BB", use_container_width=True):
+            show_recent_cases("Close pushed above upper Bollinger band", triggers["Close pushed above upper Bollinger band"])
 
     # Charts (collapsed)
     with st.expander("Detailed Charts", expanded=False):
