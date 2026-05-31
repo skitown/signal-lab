@@ -535,18 +535,22 @@ def main():
           div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
-        /* Search row: field fills, button keeps its natural width, never stacks. */
+        /* Every column can shrink — prevents horizontal overflow / cut-off buttons. */
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] { min-width: 0 !important; }
+        /* Search row: field fills the remaining space, button keeps its natural
+           width, and it never wraps or gets pushed off-screen. */
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) {
           flex-wrap: nowrap !important;
           gap: 0.5rem !important;
           align-items: center !important;
         }
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:first-child {
-          flex: 1 1 auto !important; min-width: 0 !important;
+          flex: 1 1 0% !important;
         }
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:last-child {
-          flex: 0 0 auto !important; min-width: 0 !important;
+          flex: 0 0 auto !important;
         }
+        div[data-testid="stButton"] button { white-space: nowrap !important; }
         /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
         div[data-testid="stDataFrame"] > div { overflow-x: auto; }
         /* Search button green (config.toml themes it too; this is belt-and-suspenders). */
