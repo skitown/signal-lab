@@ -508,16 +508,6 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
 
 # ------------------------------- UI ------------------------------------
 
-# Mag7 + a few extras, as one-tap sidebar buttons.
-QUICK_PICKS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
-               "ORCL", "MU", "PLTR"]
-
-
-def _pick_ticker(symbol: str) -> None:
-    """Button callback — runs before rerun, so the text box picks it up cleanly."""
-    st.session_state.ticker = symbol
-    st.session_state.qp_open = False  # collapse the Quick picks pane on selection
-
 
 def main():
     st.set_page_config(page_title="Signal Lab", layout="wide")
@@ -552,6 +542,26 @@ def main():
           background-color: #15803d !important;
           border-color: #15803d !important;
         }
+        /* Streamlit auto-adds a "Press Enter to submit form" hint — unnecessary. */
+        [data-testid="InputInstructions"] { display: none !important; }
+        /* Focused search field: green border, not the alarming default red. */
+        [data-testid="stForm"] div[data-baseweb="input"]:focus-within {
+          border-color: #16a34a !important;
+          box-shadow: none !important;
+        }
+        /* Search row: field + button ALWAYS side by side, never stacked — the
+           field flexes to fill, the button keeps its natural width. Overrides the
+           mobile wrap rule above via the more specific stForm-scoped selector. */
+        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
+          flex-wrap: nowrap !important;
+          gap: 0.5rem !important;
+        }
+        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+          min-width: 0 !important;
+        }
+        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
+          flex: 0 0 auto !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -569,8 +579,6 @@ def main():
         st.session_state.active_ticker = ""
     if "rsi_period" not in st.session_state:
         st.session_state.rsi_period = 14
-    if "qp_open" not in st.session_state:
-        st.session_state.qp_open = False
 
     # Primary controls live in the page body (not a sidebar). A form means typing
     # or tapping a quick pick only PRE-FILLS the field — analysis runs when Search
@@ -583,12 +591,6 @@ def main():
                                            use_container_width=True)
     if submitted:
         st.session_state.active_ticker = st.session_state.ticker.strip().upper()
-
-    with st.expander("Quick picks", expanded=st.session_state.qp_open):
-        qcols = st.columns(5)
-        for i, sym in enumerate(QUICK_PICKS):
-            qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
-                                on_click=_pick_ticker, args=(sym,))
 
     rsi_period = st.session_state.rsi_period  # set by the slider down at the RSI chart
     ticker = st.session_state.active_ticker
