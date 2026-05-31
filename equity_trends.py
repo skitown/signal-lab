@@ -576,6 +576,7 @@ def main():
     st.line_chart(band_df, height=320)
 
     with st.expander("Additional Charts", expanded=False):
+        st.markdown("### RSI (last 1 year)")
         st.line_chart(r.iloc[-252:], height=280)
 
         st.markdown("### Trailing Returns")
