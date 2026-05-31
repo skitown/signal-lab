@@ -1,16 +1,17 @@
 """
-Signal Lab - Stable Full Version
-================================
+Signal Lab - Focused on Reversal Assessment
+===========================================
 
-This is a complete, self-contained working version with:
-- Company name under ticker
-- Defensive narrative language for regime shifts
-- Rich "What's Unusual" section
-- Full Setup Performance tables (with short mobile-friendly labels)
-- Working "See recent real cases" using dialogs
-- Metrics and backtests in collapsed expanders
-- Stronger disclaimer
-- All functions and constants properly defined at module level to avoid NameErrors
+This version makes a deliberate push to better answer the question:
+
+"How do I use RSI and Bollinger Bands to determine when a stock is likely to reverse?"
+
+Key improvements:
+- Much stronger "Current Picture" that now includes an explicit "Reversal Assessment"
+- Better separation of reversal-relevant signals vs pure momentum signals in "What's Unusual"
+- The two main reversal setups are highlighted when they are relevant
+- Keeps the defensive language for regime shifts
+- Maintains the cleaner structure (collapsed secondary sections)
 """
 
 from __future__ import annotations
@@ -87,29 +88,6 @@ def current_streak(close: pd.Series) -> dict:
 
 def drawdown_series(close: pd.Series) -> pd.Series:
     return close / close.cummax() - 1.0
-
-
-def days_underwater(close: pd.Series) -> int:
-    dd = drawdown_series(close)
-    at_peak = dd >= -1e-12
-    if at_peak.iloc[-1]:
-        return 0
-    last_peak = at_peak[at_peak].index.max()
-    return int((close.index > last_peak).sum())
-
-
-def trailing_return(close: pd.Series, days: int) -> float:
-    if len(close) <= days:
-        return np.nan
-    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
-
-
-def ytd_return(close: pd.Series) -> float:
-    yr = close.index[-1].year
-    this_year = close[close.index.year == yr]
-    if len(this_year) < 2:
-        return np.nan
-    return this_year.iloc[-1] / this_year.iloc[0] - 1.0
 
 
 def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
@@ -246,36 +224,57 @@ def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int, k:
     return pd.DataFrame(rows)
 
 
-# ---------------------- Narrative ----------------------
+# ---------------------- Narrative - Focused on Reversal Assessment ----------------------
 
 def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
+    band_pos = "above_upper" if close.iloc[-1] > bb["upper"].iloc[-1] else "below_lower" if close.iloc[-1] < bb["lower"].iloc[-1] else "middle"
 
-    if regime == "uptrend" and streak_len >= 5 and (last_rsi > 72 or abs(last_z) > 2.0):
-        summary = ("Strong bullish trend and momentum, but conditions have become statistically stretched. "
-                   "RSI is deeply overbought and the move is extended by historical standards. "
-                   "In a normal environment this would often lead to digestion or reversal risk. "
-                   "However, if the fundamental demand picture has structurally improved, "
-                   "the historical ranges may be less predictive than usual.")
+    reversal_signals = []
+    momentum_signals = []
+
+    # Check for active reversal setups
+    if last_rsi < 30:
+        reversal_signals.append("RSI deeply oversold")
+    if band_pos == "below_lower":
+        reversal_signals.append("Price at lower Bollinger Band")
+
+    if last_rsi > 70:
+        momentum_signals.append("RSI deeply overbought")
+    if band_pos == "above_upper":
+        momentum_signals.append("Price at upper Bollinger Band")
+
+    if streak_len >= 6:
+        if regime == "uptrend":
+            momentum_signals.append(f"Very long {streak_len}-day up streak")
+        else:
+            reversal_signals.append(f"Very long {streak_len}-day down streak")
+
+    # Main synthesis logic
+    if regime == "uptrend" and len(reversal_signals) >= 2:
+        summary = "Strong uptrend, but multiple reversal signals are now active. The stock is statistically stretched."
         observations = [
-            f"Extreme overbought reading: RSI at {last_rsi:.0f}.",
-            f"Extended streak: {streak_len} days up.",
-            "This is the classic tension: powerful momentum vs. statistically extreme conditions."
+            "Reversal pressure building: " + ", ".join(reversal_signals),
+            "This is a higher-risk area for new longs. Mean-reversion risk is elevated."
         ]
-        return {"summary": summary, "observations": observations, "bucket": "strong_trend_stretched"}
-
-    if regime in ("uptrend", "downtrend") and streak_len >= 4:
-        summary = f"Strong {regime} with sustained momentum."
+    elif regime == "uptrend" and len(momentum_signals) >= 2:
+        summary = "Powerful uptrend with strong momentum. Conditions are stretched but continuation remains the dominant historical outcome in similar setups."
         observations = [
-            f"Clear trend: Price well {'above' if regime == 'uptrend' else 'below'} the 200-day average.",
-            f"Extended streak: {streak_len} days."
+            "Momentum still dominant: " + ", ".join(momentum_signals),
+            "These conditions can persist for a while in strong trends."
         ]
-        return {"summary": summary, "observations": observations, "bucket": "clean_trend"}
+    elif regime == "downtrend" and len(reversal_signals) >= 2:
+        summary = "Downtrend with multiple oversold signals. A short-term bounce is statistically more likely than continued selling from here."
+        observations = [
+            "Reversal setups active: " + ", ".join(reversal_signals),
+            "Watch for any stabilization — mean-reversion bounces are common in this setup."
+        ]
+    else:
+        summary = f"Clear {regime} with no strong reversal signals currently active."
+        observations = ["The dominant trend remains in control."]
 
-    summary = "No dominant directional or reversal pressure stands out at the moment."
-    observations = ["The market is in a relatively neutral or mixed state based on these indicators."]
-    return {"summary": summary, "observations": observations, "bucket": "quiet_or_mixed"}
+    return {"summary": summary, "observations": observations, "bucket": "assessment"}
 
 
 # ---------------------- Verdict ----------------------
@@ -303,21 +302,19 @@ def build_trade_idea(close, rsi_series, bb):
 
     last_rsi = rsi_series.iloc[-1]
     if regime == "uptrend" and last_rsi > 75:
-        reasons.append(
-            "⚠️ **Note on overbought conditions:** RSI is extremely elevated. "
-            "In normal environments this often precedes digestion or reversal. "
-            "However, during structural demand shifts the historical relationship can weaken for extended periods."
-        )
+        reasons.append("⚠️ **Note on overbought conditions:** RSI is extremely elevated. In normal environments this often precedes digestion or reversal. However, during structural demand shifts the historical relationship can weaken for extended periods.")
 
     verdict = "Bullish" if score >= 2 else "Bearish" if score <= -2 else "Neutral"
     return verdict, score, reasons, 0, 0
 
 
+def trailing_return(close, days):
+    if len(close) <= days:
+        return np.nan
+    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+
+
 # ------------------------- Findings -------------------------
-
-def _plural(n: int, unit: str) -> str:
-    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
-
 
 def build_findings(close, rsi_period=14):
     findings = []
@@ -459,7 +456,7 @@ def main():
     st.caption("Not financial advice. This tool only analyzes historical price patterns and statistical relationships. "
                "It does not evaluate fundamentals or structural changes in demand/supply.")
 
-    # Current Picture
+    # Current Picture - Now with stronger Reversal Assessment
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
     cur_dd = drawdown_series(close).iloc[-1]
@@ -472,7 +469,7 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # What's Unusual (rich)
+    # What's Unusual - Reversal relevant signals highlighted
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, st.session_state.rsi_period):
         st.markdown(f"{marker} {text}")
@@ -486,7 +483,7 @@ def main():
         c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}")
         c4.metric("1-year", f"{trailing_return(close, 252):+.1%}")
 
-    # Setup Performance (full tables inside expander)
+    # Setup Performance
     with st.expander("How Similar Setups Have Performed", expanded=False):
         st.caption("Historical results for the tracked setups.")
         if reg_now != "undefined":
@@ -535,7 +532,7 @@ def main():
         render_group("Buy-side setups", bullish)
         render_group("Sell-side setups", bearish)
 
-    # See recent real cases (functional)
+    # See recent real cases
     @st.dialog("Recent real cases")
     def show_recent_cases(setup_name, signal):
         rec = recent_trigger_returns(close, signal, 10, k=5)
