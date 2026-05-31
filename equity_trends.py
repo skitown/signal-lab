@@ -560,7 +560,7 @@ def main():
     )
     st.markdown(
         "<div style='font-size:0.8rem;color:#888;font-weight:600;"
-        "letter-spacing:.5px;margin-bottom:4px'>SIGNAL LAB · descriptive, not predictive</div>",
+        "letter-spacing:.5px;margin-bottom:4px'>SIGNAL LAB</div>",
         unsafe_allow_html=True,
     )
 
@@ -580,7 +580,7 @@ def main():
             qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
                                 on_click=_pick_ticker, args=(sym,))
 
-    with st.expander("Options — history length & RSI period"):
+    with st.expander("Options"):
         period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3)
         rsi_period = st.slider("RSI period", min_value=2, max_value=50, value=14,
                                help="Lookback window for RSI. Lower = jumpier and hits "
@@ -626,43 +626,39 @@ def main():
     st.write("")
     for line in reasons:
         st.markdown(line)
-    st.caption("A directional signal from trend, momentum, and recent setups — "
-               "not financial advice.")
+    st.caption("Not financial advice.")
 
     # --- Snapshot strip: quick orientation ---
     c1, c2, c3, c4 = st.columns(4)
     streak = current_streak(close)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
-    c1.metric("Current streak", f"{_plural(streak['length'], 'day')} {word}")
-    c2.metric("Drawdown from peak", f"{drawdown_series(close).iloc[-1]:.1%}")
-    c3.metric("Last day move", f"{close.pct_change().iloc[-1]:+.2%}")
-    c4.metric("Trailing 1y", f"{trailing_return(close, 252):+.1%}")
+    c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
+    c2.metric("Drawdown", f"{drawdown_series(close).iloc[-1]:.1%}")
+    c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}")
+    c4.metric("1-year", f"{trailing_return(close, 252):+.1%}")
 
     cur_rsi = r.iloc[-1]
     i1, i2, i3 = st.columns(3)
     pb = bb["pct_b"].iloc[-1]
-    i1.metric("Bollinger %B", f"{pb:.2f}",
-              help="1.0 = at the upper band, 0.0 = at the lower band, >1 = above it.")
+    i1.metric("%B", f"{pb:.2f}",
+              help="Bollinger %B. 1.0 = at the upper band, 0.0 = at the lower band, >1 = above it.")
     i2.metric(f"RSI ({rsi_period})", "—" if pd.isna(cur_rsi) else f"{cur_rsi:.0f}",
               help="Above 70 = overbought, below 30 = oversold (by convention).")
     bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
-    i3.metric("Band width pct.", f"{bw_pct:.0%}",
-              help="Where the band width sits in its own history. Low = a squeeze.")
+    i3.metric("Band width", f"{bw_pct:.0%}",
+              help="Where band width sits in its own history. Low = a squeeze.")
 
     # --- Backtested setups: the evidence behind the verdict ---
-    st.markdown("### Backtested setups — did they beat baseline?")
-    st.caption("Every time a setup triggered in this stock's history, what the next N "
-               "days did, versus simply holding over the same window. **Edge** is the "
-               "gap. Grouped by what each setup supports — buy-side vs sell-side.")
+    st.markdown("### Setup backtests")
+    st.caption("Forward return after each historical trigger, vs. just holding.")
     if reg_now != "undefined":
-        st.markdown(f"**Current trend regime: {reg_now}** "
-                    f"(price is {'above' if reg_now == 'uptrend' else 'below'} its "
-                    f"200-day average).")
+        st.markdown(f"**{reg_now.capitalize()}** · price "
+                    f"{'above' if reg_now == 'uptrend' else 'below'} the 200-day average.")
 
     lc, rc = st.columns([1, 2])
     horizon = lc.selectbox("Days ahead", [5, 10, 21, 42], index=1,
                            help="How many trading days after each trigger to measure.")
-    split = rc.checkbox("Split by trend regime (200-day MA)", value=True,
+    split = rc.checkbox("Split by regime", value=True,
                         help="Compare each setup in uptrends vs downtrends, each "
                              "against its OWN regime's baseline.")
 
@@ -706,16 +702,13 @@ def main():
 
     bullish = [n for n in triggers if SETUP_DIRECTION[n] == "bullish"]
     bearish = [n for n in triggers if SETUP_DIRECTION[n] == "bearish"]
-    render_group("📈 Buy-side setups — what you'd look for in BUY mode", bullish)
-    render_group("📉 Sell-side setups — what you'd look for in SELL mode", bearish)
+    render_group("📈 Buy-side", bullish)
+    render_group("📉 Sell-side", bearish)
 
-    st.caption(f"Rows with fewer than {MIN_OCCURRENCES} triggers are too thin to trust, "
-               f"however good the edge looks. With the split on, each regime is compared "
-               f"to *its own* baseline, so 'worked in uptrends' isn't just 'uptrends rise.'")
+    st.caption(f"Under {MIN_OCCURRENCES} triggers is too thin to trust.")
 
-    with st.expander("Recent trigger dates — look these up on a chart"):
-        st.caption("The last few times each setup fired, with the move that followed. "
-                   "Pull these dates up on any chart to see the actual setups.")
+    with st.expander("Recent triggers"):
+        st.caption("The last few times each setup fired, and the move that followed.")
         for name in triggers:
             rec = recent_trigger_returns(close, triggers[name], horizon, k=6)
             st.markdown(f"**{name}**")
@@ -728,23 +721,23 @@ def main():
                 )
 
     # --- What's unusual right now (situational context) ---
-    st.markdown("### What's unusual right now")
+    st.markdown("### What's unusual")
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
 
     # --- Indicator charts (supporting visual), full width, RSI first ---
     tail = close.iloc[-252:].index
 
-    st.markdown(f"### RSI ({rsi_period}) — Previous 12 months")
+    st.markdown(f"### RSI ({rsi_period}) · 1Y")
     rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
     st.line_chart(rsi_df, height=320)
 
     # Price in the SAME window, directly beneath RSI, so the x-axes align and you
     # can eyeball divergences (price high vs RSI not confirming, and vice versa).
-    st.markdown("### Price — Previous 12 months")
+    st.markdown("### Price · 1Y")
     st.line_chart(close.loc[tail], height=320)
 
-    st.markdown("### Bollinger Bands (20, 2σ) — Previous 12 months")
+    st.markdown("### Bollinger Bands (20, 2σ) · 1Y")
     band_df = pd.DataFrame({
         "Close": close, "Upper": bb["upper"], "Mid": bb["mid"], "Lower": bb["lower"],
     }).loc[tail]
@@ -765,10 +758,10 @@ def main():
     )
 
     # --- Supporting charts: full width, stacked ---
-    st.markdown("### Price (full history)")
+    st.markdown("### Price · full history")
     st.line_chart(close, height=280)
 
-    st.markdown("### Drawdown from peak")
+    st.markdown("### Drawdown")
     dd_df = drawdown_series(close).rename("Drawdown").reset_index()
     dd_df.columns = ["Date", "Drawdown"]
     underwater = (
@@ -784,17 +777,14 @@ def main():
     )
     st.altair_chart(underwater, use_container_width=True)
 
-    st.markdown("### Run-length distribution")
+    st.markdown("### Run lengths")
     runs = completed_runs(close)
     up = runs[runs.sign > 0].length.value_counts().sort_index()
     down = runs[runs.sign < 0].length.value_counts().sort_index()
     hist = pd.DataFrame({"Up runs": up, "Down runs": down}).fillna(0).astype(int)
     hist.index.name = "Run length (days)"
     st.bar_chart(hist, height=320)
-    st.caption("How many up-streaks and down-streaks of each length the stock has had. "
-               "It's the raw material behind the streak-rarity findings, but it's the "
-               "least decision-useful of these three — happy to swap it for something "
-               "more actionable.")
+    st.caption("Up- and down-streak counts by length.")
 
 
 if __name__ == "__main__":
