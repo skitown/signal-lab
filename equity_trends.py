@@ -1,16 +1,14 @@
 """
-Signal Lab - Clean Rollback + Improvements
-==========================================
+Signal Lab - Clean Rollback Version
+===================================
 
-This is a complete, working version with the key improvements from our discussion:
-- Company name displayed under the ticker
-- Smaller verdict banner
-- Stronger "Current Picture" narrative that acknowledges stretched conditions vs possible regime shifts (helps defend the tool on names like MU)
-- "What's Unusual" kept prominent
-- Metrics and backtests in collapsed expanders (less kitchen-sink feeling)
-- Mobile-friendly "See recent real cases" using dialogs
+This is a stable rollback with the key improvements you liked:
+- Company name under ticker
+- Defensive language for overbought conditions in strong trends (the note about structural demand shifts)
 - Stronger disclaimer
-- All core functions included so it actually runs
+- All functions properly defined and returning correct types
+
+Reverted to a simpler, more reliable structure to stop the breakage.
 """
 
 from __future__ import annotations
@@ -78,11 +76,13 @@ def drawdown_series(close: pd.Series) -> pd.Series:
     return close / close.cummax() - 1.0
 
 
-def vol_percentile(close: pd.Series, window: int = 20) -> float:
+def vol_percentile(close: pd.Series, window: int = 20) -> tuple[float, float]:
+    """Returns (current annualized vol, its percentile vs own history)"""
     ret = close.pct_change()
     rv = ret.rolling(window).std() * np.sqrt(252)
     cur = rv.iloc[-1]
-    return float((rv.dropna() < cur).mean())
+    pct = float((rv.dropna() < cur).mean())
+    return cur, pct
 
 
 def last_day_z(close: pd.Series) -> float:
@@ -118,18 +118,25 @@ def current_regime(close: pd.Series, window: int = 200) -> str:
     return "uptrend" if close.iloc[-1] > sma.iloc[-1] else "downtrend"
 
 
-# ---------------------- Narrative Layer (defends itself) ----------------------
+def trailing_return(close: pd.Series, days: int) -> float:
+    if len(close) <= days:
+        return np.nan
+    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+
+
+# ---------------------- Narrative (with defensive language) ----------------------
 
 def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
 
+    # Strong trend + stretched conditions (the MU-style case)
     if regime == "uptrend" and streak_len >= 5 and last_rsi > 72:
         summary = ("Strong bullish trend and momentum, but conditions have become statistically stretched. "
                    "RSI is deeply overbought and the move is extended by historical standards. "
                    "In a normal environment this would often lead to digestion or reversal risk. "
-                   "However, if the fundamental demand picture has structurally improved (e.g. new multi-year growth driver), "
-                   "the historical ranges may be less predictive than usual.")
+                   "However, if the fundamental demand picture has structurally improved "
+                   "(e.g. new multi-year growth driver), the historical ranges may be less predictive than usual.")
         observations = [
             f"Extreme overbought reading: RSI at {last_rsi:.0f}.",
             f"Extended streak: {streak_len} days up.",
@@ -139,8 +146,10 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
 
     if regime in ("uptrend", "downtrend") and streak_len >= 4:
         summary = f"Strong {regime} with sustained momentum."
-        observations = [f"Clear trend: Price well above the 200-day average." if regime == "uptrend" else "Clear trend: Price well below the 200-day average.",
-                        f"Extended streak: {streak_len} days."]
+        observations = [
+            f"Clear trend: Price well {'above' if regime == 'uptrend' else 'below'} the 200-day average.",
+            f"Extended streak: {streak_len} days."
+        ]
         return {"summary": summary, "observations": observations}
 
     summary = "No dominant directional or reversal pressure stands out at the moment."
@@ -148,7 +157,7 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
     return {"summary": summary, "observations": observations}
 
 
-# ---------------------- Verdict logic ----------------------
+# ---------------------- Verdict logic (with defensive note) ----------------------
 
 def build_trade_idea(close, rsi_series, bb):
     regime = current_regime(close)
@@ -158,7 +167,7 @@ def build_trade_idea(close, rsi_series, bb):
     if regime == "uptrend":
         score += 1
         reasons.append("🟢 **Trend:** above the 200-day average (supports bullish bias).")
-    else:
+    elif regime == "downtrend":
         score -= 1
         reasons.append("🔴 **Trend:** below the 200-day average (supports bearish bias).")
 
@@ -173,17 +182,42 @@ def build_trade_idea(close, rsi_series, bb):
 
     last_rsi = rsi_series.iloc[-1]
     if regime == "uptrend" and last_rsi > 75:
-        reasons.append("⚠️ **Note on overbought conditions:** RSI is extremely elevated. In normal environments this often precedes digestion or reversal. "
-                       "However, during structural demand shifts the historical relationship can weaken for extended periods.")
+        reasons.append(
+            "⚠️ **Note on overbought conditions:** RSI is extremely elevated. "
+            "In normal environments this often precedes digestion or reversal. "
+            "However, during structural demand shifts the historical relationship can weaken for extended periods."
+        )
 
     verdict = "Bullish" if score >= 2 else "Bearish" if score <= -2 else "Neutral"
     return verdict, score, reasons, 0, 0
 
 
-def trailing_return(close, days):
-    if len(close) <= days:
-        return np.nan
-    return close.iloc[-1] / close.iloc[-1 - days] - 1.0
+# ------------------------- Findings (simplified but stable) -------------------------
+
+def build_findings(close, rsi_period=14):
+    findings = []
+    dd = drawdown_series(close)
+    streak = current_streak(close)
+    cur_vol, vp = vol_percentile(close)
+    last_rsi = rsi(close, rsi_period).iloc[-1]
+
+    if streak["length"] >= 4:
+        word = "up" if streak["sign"] > 0 else "down"
+        findings.append(("•", f"On a {streak['length']}-day {word} streak."))
+
+    if abs(dd.iloc[-1]) > 0.05:
+        findings.append(("•", f"Drawdown of {abs(dd.iloc[-1]):.1%} from peak."))
+
+    if vp > 0.8:
+        findings.append(("⚠️", f"Volatility ({cur_vol:.0%} annualized) is in the top 20% of its history — stormy regime."))
+
+    if last_rsi > 70:
+        findings.append(("⚠️", f"RSI is {last_rsi:.0f} (overbought territory)."))
+
+    if not findings:
+        findings.append(("•", "Nothing notably unusual right now."))
+
+    return findings
 
 
 # ------------------------------- UI ------------------------------------
@@ -211,8 +245,8 @@ def main():
     )
 
     st.markdown(
-        "<div style='font-size:0.8rem;color:#888;font-weight:600;letter-spacing:.5px;margin-bottom:4px'>SIGNAL LAB "
-        "<span style='font-weight:400'>— find signal in the noise</span></div>",
+        "<div style='font-size:0.8rem;color:#888;font-weight:600;letter-spacing:.5px;margin-bottom:4px'>"
+        "SIGNAL LAB <span style='font-weight:400'>— find signal in the noise</span></div>",
         unsafe_allow_html=True,
     )
 
@@ -254,7 +288,7 @@ def main():
     r = rsi(close, st.session_state.rsi_period)
     reg_now = current_regime(close)
 
-    verdict, score, reasons, reversal_pressure, momentum_pressure = build_trade_idea(close, r, bb)
+    verdict, score, reasons, _, _ = build_trade_idea(close, r, bb)
 
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
@@ -263,11 +297,6 @@ def main():
         unsafe_allow_html=True,
     )
     st.write("")
-
-    if reversal_pressure > 0:
-        st.markdown("⚠️ **Reversal pressure detected** — multiple reversal setups have fired recently.")
-    elif reversal_pressure < 0:
-        st.markdown("🔴 **Reversal setups firing against the trend** — this is creating conflicting signals.")
 
     for line in reasons:
         st.markdown(line)
@@ -289,14 +318,10 @@ def main():
 
     # What's Unusual
     st.markdown("### What's Unusual")
-    # Simplified for this clean version
-    if last_rsi := r.iloc[-1]:
-        if last_rsi > 70:
-            st.markdown(f"⚠️ RSI is {last_rsi:.0f} (overbought territory).")
-        if vp > 0.8:
-            st.markdown(f"⚠️ Volatility is in the top 20% of its history (stormy regime).")
+    for marker, text in build_findings(close, st.session_state.rsi_period):
+        st.markdown(f"{marker} {text}")
 
-    # Key Context (collapsed)
+    # Quick Numbers (collapsed)
     with st.expander("Quick Numbers", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
         word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
@@ -307,15 +332,15 @@ def main():
 
     # Setup Performance (collapsed)
     with st.expander("How Similar Setups Have Performed", expanded=False):
-        st.write("Backtest tables would appear here in a full version.")
+        st.write("Backtest tables would go here in a fuller version.")
 
     # See recent real cases (mobile friendly)
     @st.dialog("Recent real cases")
     def show_recent_cases(setup_name):
-        st.write(f"Recent examples for {setup_name} would appear here.")
+        st.write(f"Recent examples for {setup_name} would appear here (demo mode).")
 
     st.markdown("### See recent real cases")
-    st.caption("Tap a button to see actual recent examples.")
+    st.caption("Tap to view actual recent examples.")
 
     col1, col2 = st.columns(2)
     with col1:
