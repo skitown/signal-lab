@@ -520,31 +520,76 @@ def _pick_ticker(symbol: str) -> None:
 
 def main():
     st.set_page_config(page_title="Signal Lab", layout="wide")
-    st.title("Signal Lab")
-    st.caption("Descriptive, not predictive — a tool for spotting what's unusual, "
-               "not for predicting what happens next.")
+    # Streamlit keeps st.columns side-by-side on phones, so metric strips and
+    # control rows cram together. This makes column rows WRAP (2-up) below 640px,
+    # tightens page margins, scales metric text down, and lets wide tables scroll.
+    st.markdown(
+        """
+        <style>
+        @media (max-width: 640px) {
+          .block-container { padding: 2.5rem 0.9rem 3rem !important; }
+          div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.5rem !important;
+          }
+          div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 1 1 calc(50% - 0.5rem) !important;
+            min-width: calc(50% - 0.5rem) !important;
+          }
+          div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+          div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
+        }
+        /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
+        div[data-testid="stDataFrame"] > div { overflow-x: auto; }
+        /* The collapsed-sidebar opener is a tiny faint arrow on mobile — make it
+           a real, visible, tappable button. Both testids cover Streamlit versions. */
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {
+          background: rgba(127,127,127,0.14) !important;
+          border-radius: 10px !important;
+          padding: 4px !important;
+        }
+        [data-testid="stSidebarCollapsedControl"] svg,
+        [data-testid="collapsedControl"] svg {
+          width: 1.9rem !important;
+          height: 1.9rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='font-size:0.8rem;color:#888;font-weight:600;"
+        "letter-spacing:.5px;margin-bottom:4px'>SIGNAL LAB · descriptive, not predictive</div>",
+        unsafe_allow_html=True,
+    )
 
     if "ticker" not in st.session_state:
         st.session_state.ticker = "AAPL"
 
-    with st.sidebar:
-        st.header("Settings")
-        st.text_input("Ticker", key="ticker")
-        st.caption("Quick picks")
-        qcols = st.columns(2)
-        for i, sym in enumerate(QUICK_PICKS):
-            qcols[i % 2].button(sym, key=f"qp_{sym}", use_container_width=True,
-                                on_click=_pick_ticker, args=(sym,))
+    # Primary controls live in the page body (not a sidebar) so they're reachable
+    # on a phone without opening any menu.
+    tc1, tc2 = st.columns([3, 1])
+    tc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
+                   placeholder="Ticker (e.g. AAPL)")
+    tc2.button("Analyze", type="primary", use_container_width=True)
+
+    st.caption("Quick picks")
+    qcols = st.columns(5)
+    for i, sym in enumerate(QUICK_PICKS):
+        qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
+                            on_click=_pick_ticker, args=(sym,))
+
+    with st.expander("Options — history length & RSI period"):
         period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3)
         rsi_period = st.slider("RSI period", min_value=2, max_value=50, value=14,
                                help="Lookback window for RSI. Lower = jumpier and hits "
                                     "30/70 often; higher = smoother and rarely reaches "
                                     "the extremes.")
-        go = st.button("Analyze", type="primary")
 
     ticker = st.session_state.ticker.strip().upper()
     if not ticker:
-        st.info("Enter a ticker (or tap a quick pick) in the sidebar.")
+        st.info("Enter a ticker above (or tap a quick pick).")
         return
 
     try:
@@ -555,7 +600,13 @@ def main():
 
     close = df["Close"].dropna()
     last_date = close.index[-1].date()
-    st.subheader(f"{ticker} — through {last_date}  ·  {len(close):,} trading days")
+    st.markdown(
+        f"<div style='font-size:clamp(36px,9vw,54px);font-weight:800;line-height:1.02;"
+        f"margin:2px 0 0'>{ticker}</div>"
+        f"<div style='color:#888;font-size:0.85rem;margin:2px 0 14px'>"
+        f"through {last_date} · {len(close):,} trading days</div>",
+        unsafe_allow_html=True,
+    )
 
     # Core indicators computed once, up front — everything below reuses them.
     bb = bollinger(close)
@@ -566,8 +617,9 @@ def main():
     verdict, score, reasons = build_trade_idea(close, r, bb)
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
-        f"<div style='padding:16px 22px;border-radius:12px;background:{badge};"
-        f"color:#fff;font-weight:800;font-size:34px;letter-spacing:.5px'>"
+        f"<div style='padding:clamp(12px,3vw,16px) clamp(16px,4vw,22px);"
+        f"border-radius:12px;background:{badge};color:#fff;font-weight:800;"
+        f"font-size:clamp(22px,6vw,34px);letter-spacing:.5px'>"
         f"{verdict.upper()}</div>",
         unsafe_allow_html=True,
     )
