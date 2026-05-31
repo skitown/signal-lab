@@ -522,7 +522,9 @@ def main():
         """
         <style>
         @media (max-width: 640px) {
-          .block-container { padding: 2.5rem 0.9rem 3rem !important; }
+          .block-container,
+          [data-testid="stMainBlockContainer"],
+          [data-testid="stAppViewBlockContainer"] { padding: 2.5rem 0.9rem 3rem !important; }
           /* Wrap column rows 2-up — but not the search row (it has the text input).
              Columns targeted as direct children (> div) so this doesn't depend on the
              column element's testid, which Streamlit has renamed across versions. */
@@ -558,7 +560,11 @@ def main():
         [data-testid="stTextInput"] input {
           min-width: 0 !important;
         }
-        div[data-testid="stButton"] button { white-space: nowrap !important; }
+        div[data-testid="stButton"] button {
+          white-space: nowrap !important;
+          padding-left: 0.85rem !important;
+          padding-right: 0.85rem !important;
+        }
         /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
         div[data-testid="stDataFrame"] > div { overflow-x: auto; }
         /* Search button green (config.toml themes it too; this is belt-and-suspenders). */
