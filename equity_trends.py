@@ -584,6 +584,11 @@ def main():
           div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
+        /* Tone down metric prominence on desktop */
+        @media (min-width: 641px) {
+            div[data-testid="stMetricValue"] { font-size: 1.05rem !important; font-weight: 600; }
+            div[data-testid="stMetricLabel"] { font-size: 0.62rem !important; }
+        }
         /* Stronger horizontal scroll for tables on mobile */
         div[data-testid="stDataFrame"] {
           overflow-x: auto !important;
@@ -653,10 +658,10 @@ def main():
 
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
-        f"<div style='border-left:6px solid {badge};background:{badge}1f;"
-        f"padding:clamp(10px,2.5vw,14px) clamp(14px,3.5vw,20px);border-radius:4px;"
-        f"color:{badge};font-weight:800;font-size:clamp(22px,6vw,34px);"
-        f"letter-spacing:.5px'>{verdict.upper()}</div>",
+        f"<div style='border-left:5px solid {badge};background:{badge}1f;"
+        f"padding:8px 14px;border-radius:4px;"
+        f"color:{badge};font-weight:700;font-size:clamp(18px,4.2vw,24px);"
+        f"letter-spacing:.4px'>{verdict.upper()}</div>",
         unsafe_allow_html=True,
     )
     st.write("")
@@ -692,7 +697,13 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== Snapshot =====================
+    # ===================== What's Unusual (promoted — core of the product) =====================
+    st.markdown("### What's Unusual")
+    for marker, text in build_findings(close, rsi_period):
+        st.markdown(f"{marker} {text}")
+
+    # ===================== Key Context (more compact snapshot) =====================
+    st.markdown("### Key Context")
     c1, c2, c3, c4 = st.columns(4)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
     c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
@@ -708,14 +719,9 @@ def main():
     bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
     i3.metric("Band width", f"{bw_pct:.0%}" if not pd.isna(bw_pct) else "N/A")
 
-    # ===================== What's Unusual (primary place for unusual/reversal info) =====================
-    st.markdown("### What's Unusual")
-    for marker, text in build_findings(close, rsi_period):
-        st.markdown(f"{marker} {text}")
-
-    # ===================== All Setup Backtests =====================
-    st.markdown("### All Setup Backtests")
-    st.caption("Historical performance after every tracked setup (for reference).")
+    # ===================== Setup Performance =====================
+    st.markdown("### Setup Performance")
+    st.caption("How similar setups have performed historically (for reference).")
 
     if reg_now != "undefined":
         st.markdown(f"**Current regime:** {reg_now.capitalize()}")
