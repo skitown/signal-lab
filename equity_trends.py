@@ -565,20 +565,20 @@ def main():
     )
 
     if "ticker" not in st.session_state:
-        st.session_state.ticker = "AAPL"
+        st.session_state.ticker = ""
 
     # Primary controls live in the page body (not a sidebar) so they're reachable
     # on a phone without opening any menu.
     tc1, tc2 = st.columns([3, 1])
     tc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
-                   placeholder="Ticker (e.g. AAPL)")
-    tc2.button("Analyze", type="primary", use_container_width=True)
+                   placeholder="Search for tickers")
+    tc2.button("Search", type="primary", use_container_width=True)
 
-    st.caption("Quick picks")
-    qcols = st.columns(5)
-    for i, sym in enumerate(QUICK_PICKS):
-        qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
-                            on_click=_pick_ticker, args=(sym,))
+    with st.expander("Quick picks"):
+        qcols = st.columns(5)
+        for i, sym in enumerate(QUICK_PICKS):
+            qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
+                                on_click=_pick_ticker, args=(sym,))
 
     with st.expander("Options — history length & RSI period"):
         period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3)
@@ -589,7 +589,7 @@ def main():
 
     ticker = st.session_state.ticker.strip().upper()
     if not ticker:
-        st.info("Enter a ticker above (or tap a quick pick).")
+        st.info("Search for a ticker to get started — or open Quick picks above.")
         return
 
     try:
