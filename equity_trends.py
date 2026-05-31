@@ -509,58 +509,55 @@ def build_findings(close: pd.Series, rsi_period: int = 14) -> list[tuple[str, st
 # ------------------------------- UI ------------------------------------
 
 
+def _run_search() -> None:
+    """Set the active ticker from the search box — fired by Enter or the Search button."""
+    st.session_state.active_ticker = st.session_state.ticker.strip().upper()
+
+
 def main():
     st.set_page_config(page_title="Signal Lab", layout="wide")
-    # Streamlit keeps st.columns side-by-side on phones, so metric strips and
-    # control rows cram together. This makes column rows WRAP (2-up) below 640px,
-    # tightens page margins, scales metric text down, and lets wide tables scroll.
+    # Layout CSS. Streamlit keeps columns side-by-side on phones; we wrap them 2-up
+    # below 640px — EXCEPT the search row, which must always stay one line.
     st.markdown(
         """
         <style>
         @media (max-width: 640px) {
           .block-container { padding: 2.5rem 0.9rem 3rem !important; }
-          div[data-testid="stHorizontalBlock"] {
+          /* Wrap column rows 2-up — but not the search row (it has the text input). */
+          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) {
             flex-wrap: wrap !important;
             gap: 0.5rem !important;
           }
-          div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) > div[data-testid="column"] {
             flex: 1 1 calc(50% - 0.5rem) !important;
             min-width: calc(50% - 0.5rem) !important;
           }
           div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
+        /* Search row: field fills, button keeps its natural width, never stacks. */
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) {
+          flex-wrap: nowrap !important;
+          gap: 0.5rem !important;
+          align-items: center !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:first-child {
+          flex: 1 1 auto !important; min-width: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:last-child {
+          flex: 0 0 auto !important; min-width: 0 !important;
+        }
         /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
         div[data-testid="stDataFrame"] > div { overflow-x: auto; }
-        /* Search (form submit) button: green = "go", not the default red = "danger". */
-        div[data-testid="stFormSubmitButton"] button {
+        /* Search button green (config.toml themes it too; this is belt-and-suspenders). */
+        div[data-testid="stButton"] button {
           background-color: #16a34a !important;
           border-color: #16a34a !important;
           color: #fff !important;
         }
-        div[data-testid="stFormSubmitButton"] button:hover {
+        div[data-testid="stButton"] button:hover {
           background-color: #15803d !important;
           border-color: #15803d !important;
-        }
-        /* Streamlit auto-adds a "Press Enter to submit form" hint — unnecessary. */
-        [data-testid="InputInstructions"] { display: none !important; }
-        /* Focused search field: green border, not the alarming default red. */
-        [data-testid="stForm"] div[data-baseweb="input"]:focus-within {
-          border-color: #16a34a !important;
-          box-shadow: none !important;
-        }
-        /* Search row: field + button ALWAYS side by side, never stacked — the
-           field flexes to fill, the button keeps its natural width. Overrides the
-           mobile wrap rule above via the more specific stForm-scoped selector. */
-        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
-          flex-wrap: nowrap !important;
-          gap: 0.5rem !important;
-        }
-        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-          min-width: 0 !important;
-        }
-        [data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
-          flex: 0 0 auto !important;
         }
         </style>
         """,
@@ -580,17 +577,12 @@ def main():
     if "rsi_period" not in st.session_state:
         st.session_state.rsi_period = 14
 
-    # Primary controls live in the page body (not a sidebar). A form means typing
-    # or tapping a quick pick only PRE-FILLS the field — analysis runs when Search
-    # is pressed (or Enter), so a quick pick never fires off a search on its own.
-    with st.form("search"):
-        sc1, sc2 = st.columns([3, 1])
-        sc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
-                       placeholder="Search for tickers")
-        submitted = sc2.form_submit_button("Search", type="primary",
-                                           use_container_width=True)
-    if submitted:
-        st.session_state.active_ticker = st.session_state.ticker.strip().upper()
+    # Search lives in the page body. Plain input + button (no st.form) so there's
+    # no "Press Enter to submit form" hint; Enter or the button runs the search.
+    sc1, sc2 = st.columns([5, 1])
+    sc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
+                   placeholder="Search for tickers", on_change=_run_search)
+    sc2.button("Search", type="primary", on_click=_run_search)
 
     rsi_period = st.session_state.rsi_period  # set by the slider down at the RSI chart
     ticker = st.session_state.active_ticker
