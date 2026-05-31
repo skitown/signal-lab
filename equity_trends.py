@@ -583,9 +583,6 @@ def main():
     if submitted:
         st.session_state.active_ticker = st.session_state.ticker.strip().upper()
 
-    period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3,
-                          help="How much price history to load.")
-
     with st.expander("Quick picks"):
         qcols = st.columns(5)
         for i, sym in enumerate(QUICK_PICKS):
@@ -599,7 +596,7 @@ def main():
         return
 
     try:
-        df = load_history(ticker, period)
+        df = load_history(ticker, "max")
     except Exception as e:  # noqa: BLE001 — surface any fetch/parse error plainly
         st.error(f"Could not load '{ticker}': {e}")
         return
