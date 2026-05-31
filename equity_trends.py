@@ -547,6 +547,7 @@ def main():
           flex-wrap: nowrap !important;
           gap: 0.5rem !important;
           align-items: center !important;
+          max-width: 360px !important;  /* narrow, fixed — fits every screen. Tweak this number. */
         }
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:first-child {
           flex: 1 1 0% !important;
