@@ -2,9 +2,11 @@
 Signal Lab
 =============================================
 
-Updated version with:
-- Stronger focus on Reversal Signals
-- Clearer "Recent triggers" section (now called "Historical Examples")
+Updated with clearer separation between:
+- Overall market bias (Bullish/Neutral/Bearish verdict)
+- Specific Reversal Signals
+
+The verdict now also surfaces "Reversal Pressure" when reversal setups are active against the prevailing trend.
 """
 
 from __future__ import annotations
@@ -394,39 +396,73 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
     reasons: list[str] = []
     score = 0
 
+    # Trend regime
     if regime == "uptrend":
         score += 1
-        reasons.append("🟢 **Trend:** above the 200-day average (uptrend backdrop).")
+        reasons.append("🟢 **Trend:** above the 200-day average (supports bullish bias).")
     elif regime == "downtrend":
         score -= 1
-        reasons.append("🔴 **Trend:** below the 200-day average (downtrend backdrop).")
+        reasons.append("🔴 **Trend:** below the 200-day average (supports bearish bias).")
 
+    # Medium-term momentum
     m3 = trailing_return(close, 63)
     if not np.isnan(m3):
         if m3 > 0:
             score += 1
-            reasons.append(f"🟢 **Momentum:** {m3:+.0%} over the last ~3 months.")
+            reasons.append(f"🟢 **Momentum:** +{m3:.0%} over the last ~3 months.")
         elif m3 < 0:
             score -= 1
             reasons.append(f"🔴 **Momentum:** {m3:+.0%} over the last ~3 months.")
 
+    # Recent setup performance
+    reversal_setups = [
+        "RSI crossed below 30 (oversold)",
+        "Close dropped below lower Bollinger band"
+    ]
+    momentum_setups = [
+        "RSI crossed above 70 (overbought)",
+        "Close pushed above upper Bollinger band"
+    ]
+
+    reversal_pressure = 0
+    momentum_pressure = 0
+
     for name, sig in setup_triggers(close, rsi_series, bb).items():
         if not bool(sig.iloc[-PROPOSAL_LOOKBACK:].any()):
             continue
-        stats = backtest_by_regime(close, sig, SIGNAL_HORIZON).get(reg_key)
-        if stats is None or stats["n"] < MIN_OCCURRENCES:
-            reasons.append(f"⚪ **{name}** fired recently — too few comparable cases "
-                           f"({0 if stats is None else stats['n']}) to weigh.")
-            continue
-        if stats["mean"] > 0:
-            score += 1
-            reasons.append(f"🟢 **{name}** fired: historically {stats['mean']:+.1%} over "
-                           f"{SIGNAL_HORIZON}d in this {regime} ({stats['n']} cases).")
-        elif stats["mean"] < 0:
-            score -= 1
-            reasons.append(f"🔴 **{name}** fired: historically {stats['mean']:+.1%} over "
-                           f"{SIGNAL_HORIZON}d in this {regime} ({stats['n']} cases).")
 
+        stats = backtest_by_regime(close, sig, SIGNAL_HORIZON).get(reg_key) or backtest_by_regime(close, sig, SIGNAL_HORIZON)["All"]
+
+        if stats is None or stats["n"] < MIN_OCCURRENCES:
+            continue
+
+        if stats["mean"] > 0:
+            if name in reversal_setups:
+                reversal_pressure += 1
+                reasons.append(f"🟢 **Reversal setup fired:** {name} (historically positive in this regime).")
+            else:
+                momentum_pressure += 1
+                reasons.append(f"🟢 **Momentum setup fired:** {name} (historically positive in this regime).")
+        else:
+            if name in reversal_setups:
+                reversal_pressure -= 1
+                reasons.append(f"🔴 **Reversal setup fired:** {name} (historically negative in this regime).")
+            else:
+                momentum_pressure -= 1
+                reasons.append(f"🔴 **Momentum setup fired:** {name} (historically negative in this regime).")
+
+    # Adjust score based on pressures
+    if reversal_pressure > 0:
+        score += 1
+    if reversal_pressure < 0:
+        score -= 1
+
+    if momentum_pressure > 0:
+        score += 1
+    if momentum_pressure < 0:
+        score -= 1
+
+    # Final verdict
     if score >= 2:
         verdict = "Bullish"
     elif score <= -2:
@@ -436,7 +472,8 @@ def build_trade_idea(close: pd.Series, rsi_series: pd.Series, bb: pd.DataFrame) 
 
     if not reasons:
         reasons.append("Not enough history yet to read the signals.")
-    return verdict, score, reasons
+
+    return verdict, score, reasons, reversal_pressure, momentum_pressure
 
 
 # ------------------------- Findings heuristics -------------------------
@@ -624,7 +661,9 @@ def main():
     r = rsi(close, rsi_period)
     reg_now = current_regime(close)
 
-    verdict, score, reasons = build_trade_idea(close, r, bb)
+    # Updated verdict call that also returns reversal/momentum pressure
+    verdict, score, reasons, reversal_pressure, momentum_pressure = build_trade_idea(close, r, bb)
+
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
         f"<div style='border-left:6px solid {badge};background:{badge}1f;"
@@ -634,6 +673,13 @@ def main():
         unsafe_allow_html=True,
     )
     st.write("")
+
+    # Show reversal pressure clearly
+    if reversal_pressure > 0:
+        st.markdown("⚠️ **Reversal pressure detected** — multiple reversal setups have fired recently.")
+    elif reversal_pressure < 0:
+        st.markdown("🔴 **Reversal setups firing against the trend** — this is creating conflicting signals.")
+
     for line in reasons:
         st.markdown(line)
     st.caption("Not financial advice.")
@@ -660,7 +706,7 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== NEW: Dedicated Reversal Signals Section =====================
+    # ===================== Dedicated Reversal Signals Section =====================
     st.markdown("### Reversal Signals")
 
     reversal_setups = [
@@ -686,7 +732,6 @@ def main():
             )
             st.markdown(f"- Win rate: **{stats['hit_rate']:.0%}** across {stats['n']} similar cases")
 
-        # Show recent examples for this reversal setup
         rec = recent_trigger_returns(close, sig, 10, k=4)
         if not rec.empty:
             st.markdown("_Recent examples:_")
@@ -695,7 +740,7 @@ def main():
                 use_container_width=True, hide_index=True
             )
 
-    # ===================== Original Snapshot =====================
+    # ===================== Snapshot =====================
     c1, c2, c3, c4 = st.columns(4)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
     c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
@@ -716,7 +761,7 @@ def main():
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
 
-    # ===================== Setup backtests (kept but de-emphasized) =====================
+    # ===================== All Setup Backtests =====================
     st.markdown("### All Setup Backtests")
     st.caption("Historical performance after every tracked setup (for reference).")
 
@@ -762,7 +807,6 @@ def main():
     render_group("Buy-side setups", bullish)
     render_group("Sell-side setups", bearish)
 
-    # ===================== Historical Examples (renamed and clarified) =====================
     with st.expander("Historical Examples After These Setups"):
         st.caption(
             "This shows the actual dates when each setup last triggered, "
