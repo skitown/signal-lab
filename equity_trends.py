@@ -2,12 +2,15 @@
 Signal Lab
 =============================================
 
-This version fixes the Reversal Signals section to be regime-aware.
+Major cleanup of reversal-related information.
 
-Key change:
-- "RSI crossed below 30" and "Below lower Bollinger" are no longer blindly labeled as reversal signals.
-- Their meaning now depends on the current trend regime.
-- In strong uptrends (like DELL), RSI < 30 is treated as a bullish pullback, not a reversal.
+Changes in this version:
+- Removed the awkward "Reversal Signals" section that was causing confusion.
+- Strengthened the "Current Picture" narrative to better call out reversal pressure / exhaustion when relevant.
+- Made "What's Unusual" the primary place for surfacing potential reversal risks in context.
+- Improved logic so overbought conditions in strong uptrends are highlighted as possible exhaustion (instead of hiding them).
+- Proper N/A handling where data isn't applicable.
+- Kept the overall structure cleaner.
 """
 
 from __future__ import annotations
@@ -151,7 +154,7 @@ def percentile_of(series: pd.Series, value: float) -> float:
     return float((s <= value).mean()) if len(s) else float("nan")
 
 
-# ---------------------- Narrative Layer ----------------------
+# ---------------------- Narrative Layer (Improved) ----------------------
 
 def _get_band_position(close: float, bb: pd.DataFrame) -> str:
     if pd.isna(close):
@@ -192,94 +195,61 @@ def generate_narrative(
     bucket = "mixed"
     summary = "The current picture is mixed."
 
-    # Strong reversal / capitulation cases
-    if (abs(drawdown) > 0.12 and vol_percentile > 0.85 and streak_len >= 5 and
-            ((streak_sign < 0 and last_rsi < 30) or (streak_sign > 0 and last_rsi > 70))):
-        bucket = "capitulation"
-        summary = ("The stock has moved sharply with expanding volatility after a long streak. "
-                   "Conditions are deeply stretched, but the high-volatility regime increases "
-                   "the chance of violent moves in either direction.")
-        observations.append(f"Strong reversal signals: {streak_len}-day {streak_word} streak + extreme RSI + large drawdown.")
-        observations.append("Elevated volatility regime — these setups can produce sharp bounces or continued selling.")
-        observations.append("Position sizing discipline is especially important here.")
+    # Strong exhaustion / potential reversal in uptrend
+    if regime == "uptrend" and last_rsi > 75 and streak_len >= 5 and (band_pos == "above_upper" or last_z > 2.5):
+        bucket = "uptrend_exhaustion"
+        summary = ("Strong upward momentum with signs of exhaustion. The move has been extended, "
+                   "with RSI deeply overbought and price pushing well outside the Bollinger Bands.")
+        observations.append(f"Extreme overbought reading: RSI at {last_rsi:.0f}.")
+        if streak_len >= 5:
+            observations.append(f"Extended streak: {streak_len} days up.")
+        observations.append("Price is stretched relative to recent volatility.")
 
-    elif regime in ("uptrend", "downtrend"):
-        reversal_pressure = False
-        if regime == "uptrend" and (band_pos == "above_upper" or last_rsi > 70):
-            reversal_pressure = True
-        if regime == "downtrend" and (band_pos == "below_lower" or last_rsi < 30):
-            reversal_pressure = True
+    # Strong capitulation / potential reversal in downtrend
+    elif regime == "downtrend" and last_rsi < 25 and streak_len >= 5 and (band_pos == "below_lower" or last_z < -2.5):
+        bucket = "downtrend_exhaustion"
+        summary = ("Sharp decline with signs of capitulation. RSI is deeply oversold and price has moved well outside the lower Bollinger Band.")
+        observations.append(f"Extreme oversold reading: RSI at {last_rsi:.0f}.")
+        if streak_len >= 5:
+            observations.append(f"Extended down streak: {streak_len} days.")
+        observations.append("Significant downside move relative to recent volatility.")
 
-        if reversal_pressure:
-            bucket = "mixed"
-            summary = (f"The stock remains in a longer-term {regime}, but shorter-term reversal signals "
-                       "are appearing at the same time. This creates a genuinely mixed picture.")
-            observations.append(f"Higher-timeframe support: Still {regime}.")
-            observations.append(f"Shorter-term concerns: {streak_len}-day {streak_word} streak + price near band extreme.")
-            observations.append("These situations often benefit from waiting for clearer resolution.")
-
-    elif bandwidth_pct < 0.6 and abs(last_z) > 1.8:
-        bucket = "squeeze_breakout"
-        direction = "upward" if last_z > 0 else "downward"
-        summary = (f"After a period of compressed volatility, price has broken decisively outside the Bollinger Bands. "
-                   f"The breakout is occurring {direction}.")
-        observations.append(f"Recent squeeze followed by strong move (z-score {last_z:+.1f}).")
-        observations.append("Volatility expansion is now underway.")
-
+    # Classic mean-reversion setup (more relevant when against trend)
     elif (band_pos == "below_lower" and last_rsi < 30 and streak_sign <= 0) or \
          (band_pos == "above_upper" and last_rsi > 70 and streak_sign >= 0):
         bucket = "classic_reversal"
         direction = "downside" if band_pos == "above_upper" else "upside"
-        summary = ("The stock has reached a statistically stretched level after a prolonged move. "
-                   f"Multiple reversal signals are aligning, creating a potential {direction} opportunity.")
-        observations.append(f"Reversal signals active: Price at {band_pos.replace('_', ' ')} + RSI at extreme + {streak_len}-day {streak_word} streak ending.")
-        observations.append(f"The move ranks in the outer {vol_percentile:.0%} of recent volatility.")
-        if regime != "undefined":
-            observations.append(f"Note: This is occurring while the longer-term regime is still {regime}.")
+        summary = ("Price has reached a statistically stretched level after a prolonged move. "
+                   f"Multiple signals are lining up that often precede a {direction} reaction.")
+        observations.append(f"Stretched condition: Price at {band_pos.replace('_', ' ')} with RSI at extreme levels.")
+        observations.append(f"The current move ranks as an outlier relative to recent volatility (z-score {last_z:+.1f}).")
 
-    elif regime in ("uptrend", "downtrend") and streak_len >= 6 and vol_percentile > 0.6:
-        if (regime == "uptrend" and (band_pos == "above_upper" or last_rsi > 68)) or \
-           (regime == "downtrend" and (band_pos == "below_lower" or last_rsi < 32)):
-            bucket = "exhaustion"
-            summary = (f"The stock remains in a {regime}, but signs of exhaustion are appearing after a very extended move. "
-                       "While the higher-timeframe trend is still intact, reversal pressure is building.")
-            observations.append(f"Continuation still present: {regime} + {streak_len}-day streak.")
-            observations.append("Reversal pressure rising: Price at band extreme + RSI extreme.")
-            observations.append("Higher risk of a meaningful pullback or reversal from here.")
-
+    # Clean strong trend
     elif regime in ("uptrend", "downtrend") and streak_len >= 4 and 0.35 < vol_percentile < 0.80:
         if (regime == "uptrend" and band_pos in ("above_upper", "upper_half")) or \
            (regime == "downtrend" and band_pos in ("below_lower", "lower_half")):
             bucket = "clean_trend"
-            summary = (f"The stock is in a strong {regime} with healthy momentum. "
-                       "Price has been consistently moving along the outer Bollinger Band while RSI has stayed biased with the trend.")
-            observations.append(f"Strong regime: Price is well {'above' if regime == 'uptrend' else 'below'} the 200-day average.")
-            observations.append(f"Momentum: {streak_len}-day {streak_word} streak + sustained band pressure.")
-            observations.append("No significant reversal signals are currently active.")
+            summary = (f"Strong {regime} with sustained momentum. Price has been moving along the outer Bollinger Band.")
+            observations.append(f"Clear trend: Price well {'above' if regime == 'uptrend' else 'below'} the 200-day average.")
+            observations.append(f"Extended streak: {streak_len} days {streak_word}.")
 
+    # Squeeze
     elif bandwidth_pct < 0.55:
         bucket = "squeeze_low_conviction"
-        summary = ("Volatility has compressed to unusually low levels. The Bollinger Bands are extremely tight, "
-                   "which typically precedes a significant expansion move. There is currently no strong directional bias.")
+        summary = "Volatility has compressed to unusually low levels. A significant move is likely, but direction is not yet clear."
         observations.append(f"Band width is in the bottom {bandwidth_pct:.0%} of its own history.")
-        observations.append("No dominant streak or clear RSI bias is present.")
-        observations.append("The next decisive move outside the bands is likely to carry weight.")
 
-    elif vol_percentile > 0.80 and streak_len < 4:
-        bucket = "high_vol_churn"
-        summary = ("Volatility is elevated, but price action lacks a clear dominant streak or strong directional bias. "
-                   "The environment is noisy.")
-        observations.append(f"Volatility percentile is high ({vol_percentile:.0%}).")
-        observations.append("No sustained streak or clear band walk in progress.")
-        observations.append("Lower confidence in directional trades until structure returns.")
+    # High volatility outlier
+    elif vol_percentile > 0.80 and abs(last_z) > 2.5:
+        bucket = "high_vol_outlier"
+        summary = "A very large move occurred recently in a high-volatility environment. The situation is noisy."
+        observations.append(f"Extreme move: {last_z:+.1f} standard deviations.")
+        observations.append(f"Volatility is in the top {vol_percentile:.0%} of its history.")
 
     else:
-        bucket = "quiet_range"
-        summary = ("The stock is in a low-volatility, range-bound state with little momentum or reversal pressure. "
-                   "There are currently no compelling signals from the indicators.")
-        observations.append("Price is near the middle of the Bollinger Bands.")
-        observations.append(f"Volatility is relatively low (percentile {vol_percentile:.0%}).")
-        observations.append("Few or no signals in the 'unusual' category.")
+        bucket = "quiet_or_mixed"
+        summary = "No dominant directional or reversal pressure stands out at the moment."
+        observations.append("The market is in a relatively neutral or mixed state based on these indicators.")
 
     return {
         "summary": summary,
@@ -288,7 +258,7 @@ def generate_narrative(
     }
 
 
-# ---------------------- Original compute functions --------------------
+# ---------------------- Original compute functions (kept) --------------------
 
 MIN_OCCURRENCES = 20
 SIGNAL_HORIZON = 10
@@ -679,7 +649,7 @@ def main():
         st.markdown(line)
     st.caption("Not financial advice.")
 
-    # ===================== Narrative Summary =====================
+    # ===================== Current Picture (Narrative) =====================
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
     cur_dd = drawdown_series(close).iloc[-1]
@@ -701,88 +671,23 @@ def main():
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
-    # ===================== IMPROVED: Regime-Aware Reversal Signals =====================
-    st.markdown("### Reversal Signals")
-
-    st.caption("These are only shown when they represent potential mean-reversion against the prevailing trend.")
-
-    triggers = setup_triggers(close, r, bb)
-
-    # Only show "RSI crossed below 30" as a reversal if we're in a downtrend
-    if reg_now == "downtrend":
-        name = "RSI crossed below 30 (oversold)"
-        sig = triggers[name]
-        by_reg = backtest_by_regime(close, sig, 10)
-        stats = by_reg.get(reg_now) or by_reg["All"]
-
-        st.markdown(f"**{name}** (Potential bullish reversal in downtrend)")
-
-        if stats is None or stats["n"] < 10:
-            st.markdown("Not enough historical occurrences to evaluate reliably.")
-        else:
-            st.markdown(
-                f"- Average return over next 10 days: **{stats['mean']:+.1%}** "
-                f"(vs baseline {stats['base_mean']:+.1%})"
-            )
-            st.markdown(f"- Win rate: **{stats['hit_rate']:.0%}** across {stats['n']} similar cases")
-
-        rec = recent_trigger_returns(close, sig, 10, k=4)
-        if not rec.empty:
-            st.markdown("_Recent examples:_")
-            st.dataframe(
-                rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
-                use_container_width=True, hide_index=True
-            )
-    else:
-        st.markdown("**RSI crossed below 30 (oversold)**")
-        st.markdown("_Currently in an uptrend — this is more likely a bullish pullback than a reversal._")
-
-    # Only show "Below lower Bollinger" as a reversal if we're in a downtrend
-    if reg_now == "downtrend":
-        name = "Close dropped below lower Bollinger band"
-        sig = triggers[name]
-        by_reg = backtest_by_regime(close, sig, 10)
-        stats = by_reg.get(reg_now) or by_reg["All"]
-
-        st.markdown(f"**{name}** (Potential bullish reversal in downtrend)")
-
-        if stats is None or stats["n"] < 10:
-            st.markdown("Not enough historical occurrences to evaluate reliably.")
-        else:
-            st.markdown(
-                f"- Average return over next 10 days: **{stats['mean']:+.1%}** "
-                f"(vs baseline {stats['base_mean']:+.1%})"
-            )
-            st.markdown(f"- Win rate: **{stats['hit_rate']:.0%}** across {stats['n']} similar cases")
-
-        rec = recent_trigger_returns(close, sig, 10, k=4)
-        if not rec.empty:
-            st.markdown("_Recent examples:_")
-            st.dataframe(
-                rec.style.format({f"Move over next 10d": "{:+.1%}"}, na_rep="—"),
-                use_container_width=True, hide_index=True
-            )
-    else:
-        st.markdown("**Close dropped below lower Bollinger band**")
-        st.markdown("_Currently in an uptrend — this is more likely a bullish pullback than a reversal._")
-
     # ===================== Snapshot =====================
     c1, c2, c3, c4 = st.columns(4)
     word = "up" if streak["sign"] > 0 else "down" if streak["sign"] < 0 else "flat"
     c1.metric("Streak", f"{_plural(streak['length'], 'day')} {word}")
-    c2.metric("Drawdown", f"{cur_dd:.1%}")
-    c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}")
-    c4.metric("1-year", f"{trailing_return(close, 252):+.1%}")
+    c2.metric("Drawdown", f"{cur_dd:.1%}" if not pd.isna(cur_dd) else "N/A")
+    c3.metric("Last day", f"{close.pct_change().iloc[-1]:+.2%}" if not pd.isna(close.pct_change().iloc[-1]) else "N/A")
+    c4.metric("1-year", f"{trailing_return(close, 252):+.1%}" if not pd.isna(trailing_return(close, 252)) else "N/A")
 
     cur_rsi = r.iloc[-1]
     i1, i2, i3 = st.columns(3)
     pb = bb["pct_b"].iloc[-1]
-    i1.metric("%B", f"{pb:.2f}")
+    i1.metric("%B", f"{pb:.2f}" if not pd.isna(pb) else "N/A")
     i2.metric(f"RSI ({rsi_period})", "—" if pd.isna(cur_rsi) else f"{cur_rsi:.0f}")
     bw_pct = percentile_of(bb["bandwidth"], bb["bandwidth"].iloc[-1])
-    i3.metric("Band width", f"{bw_pct:.0%}")
+    i3.metric("Band width", f"{bw_pct:.0%}" if not pd.isna(bw_pct) else "N/A")
 
-    # ===================== What's Unusual =====================
+    # ===================== What's Unusual (primary place for unusual/reversal info) =====================
     st.markdown("### What's Unusual")
     for marker, text in build_findings(close, rsi_period):
         st.markdown(f"{marker} {text}")
