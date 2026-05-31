@@ -558,10 +558,44 @@ def main():
         if st.button("Above Upper BB", use_container_width=True):
             show_recent_cases("Close pushed above upper Bollinger band", triggers["Close pushed above upper Bollinger band"])
 
-    # Charts (collapsed)
-    with st.expander("Detailed Charts", expanded=False):
-        st.line_chart(close.iloc[-252:], height=280)
+    # Price & Bollinger Bands (kept prominent because Bollinger Bands are core to the app)
+    st.markdown("### Price & Bollinger Bands (20, 2σ)")
+    band_df = pd.DataFrame({
+        "Close": close,
+        "Upper": bb["upper"],
+        "Mid": bb["mid"],
+        "Lower": bb["lower"],
+    }).iloc[-252:]
+    st.line_chart(band_df, height=320)
+
+    # Other charts (collapsed to reduce noise)
+    with st.expander("Additional Charts", expanded=False):
+        st.markdown("### RSI")
         st.line_chart(r.iloc[-252:], height=280)
+
+        st.markdown("### Trailing Returns")
+        rets = {
+            "1 week (5d)": trailing_return(close, 5),
+            "1 month (21d)": trailing_return(close, 21),
+            "3 months (63d)": trailing_return(close, 63),
+            "1 year (252d)": trailing_return(close, 252),
+            "YTD": ytd_return(close),
+        }
+        st.dataframe(pd.DataFrame({"Return": rets}).style.format("{:+.2%}", na_rep="—"), use_container_width=True)
+
+        st.markdown("### Drawdown")
+        dd_df = drawdown_series(close).rename("Drawdown").reset_index().iloc[-252:]
+        dd_df.columns = ["Date", "Drawdown"]
+        underwater = (
+            alt.Chart(dd_df)
+            .mark_area(color="#3b82f6", opacity=0.85, line={"color": "#1d4ed8"})
+            .encode(
+                x=alt.X("Date:T", title=None),
+                y=alt.Y("Drawdown:Q", title=None, axis=alt.Axis(format="%")),
+            )
+            .properties(height=240)
+        )
+        st.altair_chart(underwater, use_container_width=True)
 
 
 if __name__ == "__main__":
