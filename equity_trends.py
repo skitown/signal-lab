@@ -566,13 +566,25 @@ def main():
 
     if "ticker" not in st.session_state:
         st.session_state.ticker = ""
+    if "active_ticker" not in st.session_state:
+        st.session_state.active_ticker = ""
+    if "rsi_period" not in st.session_state:
+        st.session_state.rsi_period = 14
 
-    # Primary controls live in the page body (not a sidebar) so they're reachable
-    # on a phone without opening any menu.
-    tc1, tc2 = st.columns([3, 1])
-    tc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
-                   placeholder="Search for tickers")
-    tc2.button("Search", type="primary", use_container_width=True)
+    # Primary controls live in the page body (not a sidebar). A form means typing
+    # or tapping a quick pick only PRE-FILLS the field — analysis runs when Search
+    # is pressed (or Enter), so a quick pick never fires off a search on its own.
+    with st.form("search"):
+        sc1, sc2 = st.columns([3, 1])
+        sc1.text_input("Ticker", key="ticker", label_visibility="collapsed",
+                       placeholder="Search for tickers")
+        submitted = sc2.form_submit_button("Search", type="primary",
+                                           use_container_width=True)
+    if submitted:
+        st.session_state.active_ticker = st.session_state.ticker.strip().upper()
+
+    period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3,
+                          help="How much price history to load.")
 
     with st.expander("Quick picks"):
         qcols = st.columns(5)
@@ -580,16 +592,10 @@ def main():
             qcols[i % 5].button(sym, key=f"qp_{sym}", use_container_width=True,
                                 on_click=_pick_ticker, args=(sym,))
 
-    with st.expander("Options"):
-        period = st.selectbox("History", ["1y", "2y", "5y", "10y", "max"], index=3)
-        rsi_period = st.slider("RSI period", min_value=2, max_value=50, value=14,
-                               help="Lookback window for RSI. Lower = jumpier and hits "
-                                    "30/70 often; higher = smoother and rarely reaches "
-                                    "the extremes.")
-
-    ticker = st.session_state.ticker.strip().upper()
+    rsi_period = st.session_state.rsi_period  # set by the slider down at the RSI chart
+    ticker = st.session_state.active_ticker
     if not ticker:
-        st.info("Search for a ticker to get started — or open Quick picks above.")
+        st.info("Type or pick a ticker, then press Search.")
         return
 
     try:
@@ -728,7 +734,10 @@ def main():
     # --- Indicator charts (supporting visual), full width, RSI first ---
     tail = close.iloc[-252:].index
 
-    st.markdown(f"### RSI ({rsi_period}) · 1Y")
+    st.markdown("### RSI · 1Y")
+    st.slider("RSI period", min_value=2, max_value=50, key="rsi_period",
+              help="Lookback window for RSI. Lower = jumpier and hits 30/70 often; "
+                   "higher = smoother and rarely reaches the extremes.")
     rsi_df = pd.DataFrame({"RSI": r, "Overbought (70)": 70, "Oversold (30)": 30}).loc[tail]
     st.line_chart(rsi_df, height=320)
 
