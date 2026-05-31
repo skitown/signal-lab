@@ -541,26 +541,24 @@ def main():
         }
         /* Wide backtest tables: scroll sideways instead of squishing to nothing. */
         div[data-testid="stDataFrame"] > div { overflow-x: auto; }
-        /* The collapsed-sidebar opener is a tiny faint arrow on mobile — make it
-           a real, visible, tappable button. Both testids cover Streamlit versions. */
-        [data-testid="stSidebarCollapsedControl"],
-        [data-testid="collapsedControl"] {
-          background: rgba(127,127,127,0.14) !important;
-          border-radius: 10px !important;
-          padding: 4px !important;
+        /* Search (form submit) button: green = "go", not the default red = "danger". */
+        div[data-testid="stFormSubmitButton"] button {
+          background-color: #16a34a !important;
+          border-color: #16a34a !important;
+          color: #fff !important;
         }
-        [data-testid="stSidebarCollapsedControl"] svg,
-        [data-testid="collapsedControl"] svg {
-          width: 1.9rem !important;
-          height: 1.9rem !important;
+        div[data-testid="stFormSubmitButton"] button:hover {
+          background-color: #15803d !important;
+          border-color: #15803d !important;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<div style='font-size:0.8rem;color:#888;font-weight:600;"
-        "letter-spacing:.5px;margin-bottom:4px'>SIGNAL LAB</div>",
+        "<div style='font-size:0.8rem;color:#888;font-weight:600;letter-spacing:.5px;"
+        "margin-bottom:4px'>SIGNAL LAB "
+        "<span style='font-weight:400'>— find signal in the noise</span></div>",
         unsafe_allow_html=True,
     )
 
@@ -592,7 +590,6 @@ def main():
     rsi_period = st.session_state.rsi_period  # set by the slider down at the RSI chart
     ticker = st.session_state.active_ticker
     if not ticker:
-        st.info("Type or pick a ticker, then press Search.")
         return
 
     try:
@@ -620,10 +617,10 @@ def main():
     verdict, score, reasons = build_trade_idea(close, r, bb)
     badge = {"Bullish": "#16a34a", "Neutral": "#6b7280", "Bearish": "#dc2626"}[verdict]
     st.markdown(
-        f"<div style='padding:clamp(12px,3vw,16px) clamp(16px,4vw,22px);"
-        f"border-radius:12px;background:{badge};color:#fff;font-weight:800;"
-        f"font-size:clamp(22px,6vw,34px);letter-spacing:.5px'>"
-        f"{verdict.upper()}</div>",
+        f"<div style='border-left:6px solid {badge};background:{badge}1f;"
+        f"padding:clamp(10px,2.5vw,14px) clamp(14px,3.5vw,20px);border-radius:4px;"
+        f"color:{badge};font-weight:800;font-size:clamp(22px,6vw,34px);"
+        f"letter-spacing:.5px'>{verdict.upper()}</div>",
         unsafe_allow_html=True,
     )
     st.write("")
