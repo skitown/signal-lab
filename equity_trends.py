@@ -255,51 +255,31 @@ def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int, k:
 def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
-    band_pos = _get_band_position(close.iloc[-1], bb)
 
-    reversal_signals = []
-    momentum_signals = []
-
-    # Detect active signals
-    if last_rsi < 30:
-        reversal_signals.append("RSI deeply oversold")
-    if band_pos == "below_lower":
-        reversal_signals.append("Price at lower Bollinger Band")
-    if last_rsi > 70:
-        momentum_signals.append("RSI deeply overbought")
-    if band_pos == "above_upper":
-        momentum_signals.append("Price at upper Bollinger Band")
-    if streak_len >= 6:
-        if regime == "uptrend":
-            momentum_signals.append(f"Very long {streak_len}-day up streak")
-        else:
-            reversal_signals.append(f"Very long {streak_len}-day down streak")
-
-    # Core synthesis focused on reversal likelihood
-    if len(reversal_signals) >= 2:
-        if regime == "uptrend":
-            summary = "Strong uptrend, but multiple reversal signals are now active. The stock is statistically stretched and mean-reversion risk is elevated."
-            observations = [
-                "Reversal pressure: " + ", ".join(reversal_signals),
-                "These conditions have historically led to digestion or pullbacks more often than continuation in similar uptrends."
-            ]
-        else:
-            summary = "Downtrend with multiple oversold signals firing. A short-term bounce or reversal is the more common historical outcome from this setup."
-            observations = [
-                "Reversal setups active: " + ", ".join(reversal_signals),
-                "Watch for stabilization — these setups have often produced bounces in the current regime."
-            ]
-    elif len(momentum_signals) >= 2 and regime == "uptrend":
-        summary = "Powerful uptrend with strong momentum. Conditions are stretched, but continuation has historically been the dominant outcome in similar setups."
+    if regime == "uptrend" and streak_len >= 5 and (last_rsi > 72 or abs(last_z) > 2.0):
+        summary = ("Strong bullish trend and momentum, but conditions have become statistically stretched. "
+                   "RSI is deeply overbought and the move is extended by historical standards. "
+                   "In a normal environment this would often lead to digestion or reversal risk. "
+                   "However, if the fundamental demand picture has structurally improved (e.g. new multi-year growth driver), "
+                   "the historical ranges may be less predictive than usual.")
         observations = [
-            "Momentum still dominant: " + ", ".join(momentum_signals),
-            "These can persist for a while in strong trends (especially if fundamentals are supportive)."
+            f"Extreme overbought reading: RSI at {last_rsi:.0f}.",
+            f"Extended streak: {streak_len} days up.",
+            "This is the classic tension: powerful momentum vs. statistically extreme conditions."
         ]
-    else:
-        summary = f"Clear {regime} with no strong reversal signals currently active."
-        observations = ["The dominant trend remains in control based on these indicators."]
+        return {"summary": summary, "observations": observations, "bucket": "strong_trend_stretched"}
 
-    return {"summary": summary, "observations": observations, "bucket": "assessment"}
+    if regime in ("uptrend", "downtrend") and streak_len >= 4:
+        summary = f"Strong {regime} with sustained momentum."
+        observations = [
+            f"Clear trend: Price well {'above' if regime == 'uptrend' else 'below'} the 200-day average.",
+            f"Extended streak: {streak_len} days."
+        ]
+        return {"summary": summary, "observations": observations, "bucket": "clean_trend"}
+
+    summary = "No dominant directional or reversal pressure stands out at the moment."
+    observations = ["The market is in a relatively neutral or mixed state based on these indicators."]
+    return {"summary": summary, "observations": observations, "bucket": "quiet_or_mixed"}
 
 
 # ---------------------- Verdict (with defensive note) ----------------------
