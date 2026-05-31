@@ -523,12 +523,14 @@ def main():
         <style>
         @media (max-width: 640px) {
           .block-container { padding: 2.5rem 0.9rem 3rem !important; }
-          /* Wrap column rows 2-up — but not the search row (it has the text input). */
+          /* Wrap column rows 2-up — but not the search row (it has the text input).
+             Columns targeted as direct children (> div) so this doesn't depend on the
+             column element's testid, which Streamlit has renamed across versions. */
           div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) {
             flex-wrap: wrap !important;
             gap: 0.5rem !important;
           }
-          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) > div[data-testid="column"] {
+          div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stTextInput"])) > div {
             flex: 1 1 calc(50% - 0.5rem) !important;
             min-width: calc(50% - 0.5rem) !important;
           }
@@ -536,18 +538,18 @@ def main():
           div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
         }
         /* Every column can shrink — prevents horizontal overflow / cut-off buttons. */
-        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] { min-width: 0 !important; }
-        /* Search row: field fills the remaining space, button keeps its natural
-           width, and it never wraps or gets pushed off-screen. */
+        div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
+        /* Search row: field fills remaining space, button keeps its natural width,
+           never wraps or gets pushed off-screen. */
         div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) {
           flex-wrap: nowrap !important;
           gap: 0.5rem !important;
           align-items: center !important;
         }
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:first-child {
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:first-child {
           flex: 1 1 0% !important;
         }
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div[data-testid="column"]:last-child {
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stTextInput"]) > div:last-child {
           flex: 0 0 auto !important;
         }
         div[data-testid="stButton"] button { white-space: nowrap !important; }
