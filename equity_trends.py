@@ -383,18 +383,22 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
         observations = ["The dominant trend remains in control based on these indicators."]
 
     # Intraday hourly context (addresses the exact gap: "oversold on hourly" trades that daily misses)
-    if intraday and intraday.get("available") and intraday.get("is_oversold"):
+    if intraday and intraday.get("available"):
         h_rsi = intraday.get("last_rsi", 0)
-        note = f"Hourly oversold (RSI {h_rsi:.0f}"
-        if intraday.get("below_lower_bb"):
-            note += ", below lower band"
-        note += ")."
-        if last_rsi >= 35:
-            note += " Daily not yet oversold — this can be a short-term timing signal for a potential bounce entry (as in the 'oversold on hourly' options trade example)."
-        else:
-            note += " Daily also oversold — stronger multi-timeframe confluence."
-        observations.append(note)
-        observations.append("⚠️ Note: Intraday signals are noisier and have weaker, shorter-lived edges than daily. This is useful for timing within a broader thesis, not as standalone conviction. Structural regime shifts can invalidate historical intraday mean-reversion too.")
+        if intraday.get("is_oversold"):
+            note = f"Hourly oversold (RSI {h_rsi:.1f}"
+            if intraday.get("below_lower_bb"):
+                note += ", below lower band"
+            note += ")."
+            if last_rsi >= 35:
+                note += " Daily not yet oversold — this can be a short-term timing signal for a potential bounce entry (as in the 'oversold on hourly' options trade example)."
+            else:
+                note += " Daily also oversold — stronger multi-timeframe confluence."
+            observations.append(note)
+            observations.append("⚠️ Note: Intraday signals are noisier and have weaker, shorter-lived edges than daily. This is useful for timing within a broader thesis, not as standalone conviction. Structural regime shifts can invalidate historical intraday mean-reversion too.")
+        elif h_rsi <= 31:
+            observations.append(f"Hourly near the oversold line (RSI {h_rsi:.1f}). This is the class of short-term 'oversold on hourly' timing signal (while daily uptrend is in control).")
+            observations.append("⚠️ Note: Intraday signals are noisier and have weaker, shorter-lived edges than daily. Use for entry timing only.")
 
     return {"summary": summary, "observations": observations, "bucket": "assessment"}
 
@@ -484,12 +488,15 @@ def build_findings(close, rsi_period=14, intraday=None):
         findings.append(("⚠️", f"RSI is {last_rsi:.0f} (oversold)."))
 
     # Key new item: surface hourly oversold even when daily is quiet (directly for the Slack example)
-    if intraday and intraday.get("available") and intraday.get("is_oversold"):
+    if intraday and intraday.get("available"):
         h_rsi = intraday.get("last_rsi", 0)
-        if last_rsi > OVERSOLD_RSI:
-            findings.append(("⚠️", f"Oversold on hourly (RSI {h_rsi:.0f}) — daily RSI not oversold. This is the exact class of short-term signal used in the 'Bought ... Oversold on hourly' trade."))
-        else:
-            findings.append(("•", f"Hourly also oversold (RSI {h_rsi:.0f})."))
+        if intraday.get("is_oversold"):
+            if last_rsi > OVERSOLD_RSI:
+                findings.append(("⚠️", f"Oversold on hourly (RSI {h_rsi:.1f}) — daily RSI not oversold. This is the exact class of short-term signal used in the 'Bought ... Oversold on hourly' trade."))
+            else:
+                findings.append(("•", f"Hourly also oversold (RSI {h_rsi:.1f})."))
+        elif h_rsi <= 31:
+            findings.append(("•", f"Hourly near oversold line (RSI {h_rsi:.1f}) — the 'oversold on hourly' timing setup while daily is not."))
 
     win = close.iloc[-252:]
     from_hi = close.iloc[-1] / win.max() - 1
@@ -631,17 +638,20 @@ def main():
     # === PROMINENT OVERSOLD ALARM BELLS ===
     # Placed high and loud right after the verdict so oversold conditions (daily or hourly) are impossible to miss.
     daily_oversold = r.iloc[-1] <= OVERSOLD_RSI
-    hourly_oversold_now = intraday and intraday.get("available") and intraday.get("is_oversold")
-    if daily_oversold or hourly_oversold_now:
+    hourly_is_oversold = intraday and intraday.get("available") and intraday.get("is_oversold")
+    h_r = intraday.get("last_rsi", 0) if intraday and intraday.get("available") else 0
+    hourly_near_line = (intraday and intraday.get("available") and not hourly_is_oversold and 0 < h_r <= 31)
+    if daily_oversold or hourly_is_oversold or hourly_near_line:
         alarm_lines = []
         if daily_oversold:
             alarm_lines.append(f"🚨 DAILY OVERSOLD — RSI {r.iloc[-1]:.0f} (classic reversal setup)")
-        if hourly_oversold_now:
-            h_r = intraday.get("last_rsi", 0)
+        if hourly_is_oversold:
             if daily_oversold:
-                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.0f} (multi-timeframe confluence)")
+                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.1f} (multi-timeframe confluence)")
             else:
-                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.0f} (short-term bounce/timing signal while daily is NOT oversold)")
+                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.1f} (short-term bounce/timing signal while daily is NOT oversold)")
+        elif hourly_near_line:
+            alarm_lines.append(f"🕐 HOURLY NEAR OVERSOLD — RSI {h_r:.1f} (touching the 30 line — the exact 'oversold on hourly' class of short-term signal)")
 
         alarm_html = (
             "<div style='background:#fef2f2;border:3px solid #b91c1c;border-radius:8px;"
@@ -675,8 +685,13 @@ def main():
     # Minimal intraday badge line when data present (so user immediately sees hourly was considered)
     if intraday and intraday.get("available"):
         h_r = intraday.get("last_rsi", 0)
-        h_flag = "⚠️ OVERSOLD" if intraday.get("is_oversold") else "neutral"
-        st.caption(f"🕐 1h snapshot (last bar ~{intraday.get('last_ts'):%Y-%m-%d %H:%M}): RSI {h_r:.0f} — {h_flag}")
+        if intraday.get("is_oversold"):
+            h_flag = "⚠️ OVERSOLD"
+        elif h_r <= 31:
+            h_flag = "touching oversold line (~30)"
+        else:
+            h_flag = "neutral"
+        st.caption(f"🕐 1h snapshot (last bar ~{intraday.get('last_ts'):%Y-%m-%d %H:%M}): RSI {h_r:.2f} — {h_flag}")
 
     # What's Unusual (rich version)
     st.markdown("### What's Unusual")
