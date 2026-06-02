@@ -1,6 +1,6 @@
 """
-Signal Lab - Roll Forward v1 (Richer Features Restored)
-=======================================================
+Signal Lab - Roll Forward v1 (Richer Features Restored + Hourly)
+===============================================================
 
 Base: User's last known good "Clean Rollback Version" (2026-06-05)
 This version restores the richer, more complete functionality while keeping
@@ -13,6 +13,15 @@ Restored / Improved:
 - Bollinger Bands chart restored prominently
 - All previous defensive language, company name, smaller verdict, stronger disclaimer, collapsed sections
 - All functions properly defined at module level (no more NameError / TypeError on load)
+
+NEW in this update:
+- Intraday (1h) support via yfinance to surface "oversold on hourly" signals (the exact blind spot
+  from the Slack post: "Bought 200 Jan 2027 450 calls. Oversold on hourly Just a trade").
+  - load_intraday (60d 1h, graceful), hourly_oversold() reusing rsi/bollinger
+  - Narrative + build_findings now detect + call out hourly oversold (esp. when daily RSI >30)
+  - Caption + 1h snapshot line in UI for immediate visibility
+  - Strong defensive caveats: "noisier, weaker edges, use for timing not conviction"
+- Directly answers "I don't think our tool would have shown me this info would it?"
 
 This is a meaningful step forward from the stable baseline.
 """
@@ -67,6 +76,22 @@ def get_company_name(ticker: str) -> str:
         return name.strip()
     except Exception:
         return ""
+
+
+@st.cache_data(ttl=15 * 60, show_spinner=False)
+def load_intraday(ticker: str, interval: str = "1h", period: str = "60d") -> pd.DataFrame:
+    """Load recent intraday bars. 1h capped by yfinance (~60-730d max); graceful empty on fail."""
+    if yf is None:
+        return pd.DataFrame()
+    try:
+        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
+        if df.empty:
+            return pd.DataFrame()
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df[["Open", "High", "Low", "Close", "Volume"]]
+    except Exception:
+        return pd.DataFrame()
 
 
 # --------------------------- Compute layer ----------------------------
@@ -174,6 +199,23 @@ def current_regime(close: pd.Series, window: int = 200) -> str:
 
 
 def _get_band_position(close: float, bb: pd.DataFrame) -> str:
+    """Return 'above_upper', 'below_lower', 'upper_half', or 'lower_half'."""
+    if pd.isna(close):
+        return "middle"
+    upper = bb["upper"].iloc[-1]
+    lower = bb["lower"].iloc[-1]
+    mid = bb["mid"].iloc[-1]
+    if close > upper:
+        return "above_upper"
+    elif close < lower:
+        return "below_lower"
+    elif close > mid:
+        return "upper_half"
+    else:
+        return "lower_half"
+
+
+def _get_band_position(close: float, bb: pd.DataFrame) -> str:
     """Determine if price is above upper, below lower, or in the middle band area."""
     if pd.isna(close):
         return "middle"
@@ -188,6 +230,29 @@ def _get_band_position(close: float, bb: pd.DataFrame) -> str:
         return "upper_half"
     else:
         return "lower_half"
+
+
+def hourly_oversold(close_h: pd.Series, rsi_period: int = 14) -> dict:
+    """Return hourly oversold status for surfacing 'oversold on hourly' like the Slack trade example.
+    Returns dict with available, last_rsi, below_lower_bb, rsi_oversold, is_oversold, last_ts.
+    Safe on short series (needs ~30 bars for stable RSI)."""
+    if close_h is None or len(close_h) < 30:
+        return {"available": False, "is_oversold": False}
+    r = rsi(close_h, rsi_period)
+    bb = bollinger(close_h)
+    last_rsi = float(r.iloc[-1])
+    last_close = float(close_h.iloc[-1])
+    lower = bb["lower"].iloc[-1]
+    below_lower = last_close < lower if not pd.isna(lower) else False
+    rsi_os = last_rsi < 30
+    return {
+        "available": True,
+        "last_rsi": last_rsi,
+        "below_lower_bb": bool(below_lower),
+        "rsi_oversold": bool(rsi_os),
+        "is_oversold": bool(rsi_os or below_lower),
+        "last_ts": close_h.index[-1],
+    }
 
 
 # ---------------------- Setup triggers & backtests ----------------------
@@ -269,7 +334,7 @@ def recent_trigger_returns(close: pd.Series, signal: pd.Series, horizon: int, k:
 
 # ---------------------- Narrative (defensive) ----------------------
 
-def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z):
+def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, drawdown, last_z, intraday=None):
     last_rsi = rsi.iloc[-1]
     streak_len = current_streak.get("length", 0)
     band_pos = _get_band_position(close.iloc[-1], bb)
@@ -316,6 +381,20 @@ def generate_narrative(close, rsi, bb, current_streak, vol_percentile, regime, d
         summary = f"Clear {regime} with no strong reversal signals currently active."
         observations = ["The dominant trend remains in control based on these indicators."]
 
+    # Intraday hourly context (addresses the exact gap: "oversold on hourly" trades that daily misses)
+    if intraday and intraday.get("available") and intraday.get("is_oversold"):
+        h_rsi = intraday.get("last_rsi", 0)
+        note = f"Hourly oversold (RSI {h_rsi:.0f}"
+        if intraday.get("below_lower_bb"):
+            note += ", below lower band"
+        note += ")."
+        if last_rsi >= 35:
+            note += " Daily not yet oversold — this can be a short-term timing signal for a potential bounce entry (as in the 'oversold on hourly' options trade example)."
+        else:
+            note += " Daily also oversold — stronger multi-timeframe confluence."
+        observations.append(note)
+        observations.append("⚠️ Note: Intraday signals are noisier and have weaker, shorter-lived edges than daily. This is useful for timing within a broader thesis, not as standalone conviction. Structural regime shifts can invalidate historical intraday mean-reversion too.")
+
     return {"summary": summary, "observations": observations, "bucket": "assessment"}
 
 
@@ -360,7 +439,7 @@ def _plural(n: int, unit: str) -> str:
     return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
 
 
-def build_findings(close, rsi_period=14):
+def build_findings(close, rsi_period=14, intraday=None):
     findings = []
     dd = drawdown_series(close)
     streak = current_streak(close)
@@ -402,6 +481,14 @@ def build_findings(close, rsi_period=14):
         findings.append(("⚠️", f"RSI is {last_rsi:.0f} (overbought) — higher than on {rsi_pct:.0%} of days."))
     elif last_rsi <= 30:
         findings.append(("⚠️", f"RSI is {last_rsi:.0f} (oversold)."))
+
+    # Key new item: surface hourly oversold even when daily is quiet (directly for the Slack example)
+    if intraday and intraday.get("available") and intraday.get("is_oversold"):
+        h_rsi = intraday.get("last_rsi", 0)
+        if last_rsi > 30:
+            findings.append(("⚠️", f"Oversold on hourly (RSI {h_rsi:.0f}) — daily RSI not oversold. This is the exact class of short-term signal used in the 'Bought ... Oversold on hourly' trade."))
+        else:
+            findings.append(("•", f"Hourly also oversold (RSI {h_rsi:.0f})."))
 
     win = close.iloc[-252:]
     from_hi = close.iloc[-1] / win.max() - 1
@@ -500,22 +587,38 @@ def main():
     st.caption("Not financial advice. This tool only analyzes historical price patterns and statistical relationships. "
                "It does not evaluate fundamentals or structural changes in demand/supply.")
 
+    # Intraday (1h) load — short TTL cache; gracefully skips if yf can't deliver (common for some symbols)
+    intraday = None
+    try:
+        idf = load_intraday(ticker, "1h", "60d")
+        if not idf.empty:
+            h_close = idf["Close"].dropna()
+            intraday = hourly_oversold(h_close, st.session_state.rsi_period)
+    except Exception:
+        intraday = None
+
     # Current Picture
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
     cur_dd = drawdown_series(close).iloc[-1]
     lz = last_day_z(close)
 
-    narrative = generate_narrative(close, r, bb, streak, vp, reg_now, cur_dd, lz)
+    narrative = generate_narrative(close, r, bb, streak, vp, reg_now, cur_dd, lz, intraday=intraday)
 
     st.markdown("### Current Picture")
     st.markdown(narrative["summary"])
     for obs in narrative["observations"]:
         st.markdown(f"• {obs}")
 
+    # Minimal intraday badge line when data present (so user immediately sees hourly was considered)
+    if intraday and intraday.get("available"):
+        h_r = intraday.get("last_rsi", 0)
+        h_flag = "⚠️ OVERSOLD" if intraday.get("is_oversold") else "neutral"
+        st.caption(f"🕐 1h snapshot (last bar ~{intraday.get('last_ts'):%Y-%m-%d %H:%M}): RSI {h_r:.0f} — {h_flag}")
+
     # What's Unusual (rich version)
     st.markdown("### What's Unusual")
-    for marker, text in build_findings(close, st.session_state.rsi_period):
+    for marker, text in build_findings(close, st.session_state.rsi_period, intraday=intraday):
         st.markdown(f"{marker} {text}")
 
     # Quick Numbers (collapsed)
