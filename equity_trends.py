@@ -597,6 +597,37 @@ def main():
     except Exception:
         intraday = None
 
+    # === PROMINENT OVERSOLD ALARM BELLS ===
+    # Placed high and loud right after the verdict so oversold conditions (daily or hourly) are impossible to miss.
+    daily_oversold = r.iloc[-1] <= 30
+    hourly_oversold_now = intraday and intraday.get("available") and intraday.get("is_oversold")
+    if daily_oversold or hourly_oversold_now:
+        alarm_lines = []
+        if daily_oversold:
+            alarm_lines.append(f"🚨 DAILY OVERSOLD — RSI {r.iloc[-1]:.0f} (classic reversal setup)")
+        if hourly_oversold_now:
+            h_r = intraday.get("last_rsi", 0)
+            if daily_oversold:
+                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.0f} (multi-timeframe confluence)")
+            else:
+                alarm_lines.append(f"🚨 HOURLY OVERSOLD — RSI {h_r:.0f} (short-term bounce/timing signal while daily is NOT oversold)")
+
+        alarm_html = (
+            "<div style='background:#fef2f2;border:3px solid #b91c1c;border-radius:8px;"
+            "padding:14px 16px;margin:12px 0 8px'>"
+            "<div style='color:#991b1b;font-size:clamp(15px,3.8vw,18px);font-weight:900;"
+            "letter-spacing:0.5px;margin-bottom:6px'>🚨 OVERSOLD ALERTS — TREAT THESE AS POTENTIAL REVERSAL / BOUNCE SIGNALS</div>"
+        )
+        for line in alarm_lines:
+            alarm_html += f"<div style='color:#7f1d1d;font-size:clamp(14px,3.2vw,16px);font-weight:700;margin:3px 0 3px 4px'>{line}</div>"
+        alarm_html += (
+            "<div style='color:#9f1239;font-size:0.72rem;margin-top:8px;line-height:1.3'>"
+            "These are statistical observations only. Mean-reversion can fail (especially in strong trends or during structural demand shifts). "
+            "Hourly signals are noisier and best used for entry timing within a larger thesis, not standalone conviction."
+            "</div></div>"
+        )
+        st.markdown(alarm_html, unsafe_allow_html=True)
+
     # Current Picture
     streak = current_streak(close)
     cur_vol, vp = vol_percentile(close)
