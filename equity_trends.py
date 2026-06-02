@@ -578,6 +578,10 @@ def main():
         st.session_state.active_ticker = ""
     if "rsi_period" not in st.session_state:
         st.session_state.rsi_period = 14
+    if "bb_period" not in st.session_state:
+        st.session_state.bb_period = 30
+    if "bb_std" not in st.session_state:
+        st.session_state.bb_std = 3.0
 
     search_col, btn_col = st.columns([5.5, 1.35], vertical_alignment="bottom")
     with search_col:
@@ -607,7 +611,6 @@ def main():
     st.markdown(header, unsafe_allow_html=True)
 
     bb = bollinger(close)
-    bb30 = bollinger(close, 30, 3.0)
     r = rsi(close, st.session_state.rsi_period)
     reg_now = current_regime(close)
 
@@ -793,14 +796,22 @@ def main():
     }).iloc[-252:]
     st.line_chart(band_df, height=320)
 
-    st.markdown("### Bollinger Bands (30, 3σ)")
-    band30_df = pd.DataFrame({
+    st.markdown("### Comparison Bollinger Bands")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.slider("Period", min_value=5, max_value=100, value=30, step=1, key="bb_period")
+    with c2:
+        st.slider("Std Dev", min_value=1.0, max_value=4.0, value=3.0, step=0.1, key="bb_std")
+    custom_bb = bollinger(close, st.session_state.bb_period, st.session_state.bb_std)
+    custom_df = pd.DataFrame({
         "Close": close,
-        "Upper": bb30["upper"],
-        "Mid": bb30["mid"],
-        "Lower": bb30["lower"],
+        "Upper": custom_bb["upper"],
+        "Mid": custom_bb["mid"],
+        "Lower": custom_bb["lower"],
     }).iloc[-252:]
-    st.line_chart(band30_df, height=320)
+    st.line_chart(custom_df, height=320)
+
+    st.caption("The top chart is always the standard 20-period / 2σ (the one used for all \"What's Unusual\" calculations like squeezes and band walks). The bottom chart lets you experiment with other lengths and widths (defaults to the 30/3 your friend asked about). Traders often compare multiple lengths on one chart for confluence or to see short-term vs. longer-term volatility.")
 
     with st.expander("Additional Charts", expanded=False):
         st.markdown("### RSI (last 1 year)")
