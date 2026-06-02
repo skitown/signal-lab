@@ -891,17 +891,8 @@ def main():
 
     st.caption("**How traders typically use these charts:** Weekly/Monthly for big-picture trend, major levels, and long-term volatility regime. Daily for primary setups and signals (most common 'working' timeframe). Hourly for precise timing and entries — but only after you have established bias from a higher timeframe (e.g. daily or weekly Bollinger direction + RSI >50 or <50). For Hourly views, keep the date range short (last 5–20 trading days is typical); a full year of 1h bars is rarely useful and extremely noisy. Use the From/To pickers to zoom exactly on the period you care about instead of a fixed 'last N bars' window.")
 
-    # Charts (with Bollinger restored prominently)
-    st.markdown(f"### Price & Bollinger Bands (20, 2σ) — {chart_tf}")
-    band_df = pd.DataFrame({
-        "Close": chart_close,
-        "Upper": bollinger(chart_close, 20, 2.0)["upper"],
-        "Mid": bollinger(chart_close, 20, 2.0)["mid"],
-        "Lower": bollinger(chart_close, 20, 2.0)["lower"],
-    })
-    st.line_chart(band_df, height=320)
-
-    st.markdown(f"### Comparison Bollinger Bands — {chart_tf}")
+    # Charts (Bollinger visual - now only the configurable one, since 20/2 is available via the sliders)
+    st.markdown(f"### Bollinger Bands — {chart_tf}")
     c1, c2 = st.columns(2)
     with c1:
         st.slider("Period", min_value=5, max_value=100, value=30, step=1, key="bb_period")
@@ -916,21 +907,17 @@ def main():
     })
     st.line_chart(custom_df, height=320)
 
-    # Crossover / touch prices (what price would make close equal the band for these settings)
-    if len(chart_close) >= max(20, st.session_state.bb_period):
-        prev_main = chart_close.iloc[-21:-1]
-        u20 = _bollinger_touch_price(prev_main, 20, 2.0, "upper")
-        l20 = _bollinger_touch_price(prev_main, 20, 2.0, "lower")
-        prev_cust = chart_close.iloc[-(st.session_state.bb_period + 1):-1]
-        uc = _bollinger_touch_price(prev_cust, st.session_state.bb_period, st.session_state.bb_std, "upper")
-        lc = _bollinger_touch_price(prev_cust, st.session_state.bb_period, st.session_state.bb_std, "lower")
+    # Crossover / touch prices (what price would make close equal the band for the current settings)
+    if len(chart_close) >= st.session_state.bb_period:
+        prev = chart_close.iloc[-(st.session_state.bb_period + 1):-1]
+        uc = _bollinger_touch_price(prev, st.session_state.bb_period, st.session_state.bb_std, "upper")
+        lc = _bollinger_touch_price(prev, st.session_state.bb_period, st.session_state.bb_std, "lower")
         st.caption(
-            f"Touch prices (what the stock would need to trade at to hit the bands on this timeframe): "
-            f"Main 20/2 Upper ${u20:.2f} / Lower ${l20:.2f}  |  "
-            f"Custom Upper ${uc:.2f} / Lower ${lc:.2f}"
+            f"Touch prices (what the stock would need to trade at to hit the upper/lower band on this timeframe with current settings): "
+            f"Upper ${uc:.2f} / Lower ${lc:.2f}"
         )
 
-    st.caption("Top chart = fixed standard 20/2 on the selected timeframe (core 'What's Unusual' signals use daily 20/2). Bottom = your adjustable comparison (defaults to the 30/3 your friend asked about). Use the date pickers (From/To) above to focus the view — e.g. last 10 trading days on Hourly for timing entries, or 6-24 months on Daily for swing setups. Sliders change only the comparison Bollinger settings. Touch prices solve for the exact close that would land on the upper/lower band for the visible data.")
+    st.caption("This is the (now single) configurable Bollinger chart. Use the timeframe radio + From/To date pickers above to choose the view (e.g. last couple weeks on Hourly after checking Daily/Weekly bias). Sliders let you set any period/std (including the classic 20/2). Touch prices solve for the exact close that would land on the upper/lower band for the visible data and current settings. Core analysis ('What's Unusual' etc.) still uses daily 20/2.")
 
     with st.expander("Additional Charts", expanded=False):
         st.markdown(f"### RSI (on {chart_tf})")
