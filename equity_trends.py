@@ -891,7 +891,7 @@ def main():
 
     chart_r = rsi(chart_close, st.session_state.rsi_period)
 
-    st.caption("**How traders typically use these charts:** Weekly/Monthly for big-picture trend, major levels, and long-term volatility regime. Daily for primary setups and signals (most common 'working' timeframe). Hourly for precise timing and entries — but only after you have established bias from a higher timeframe (e.g. daily or weekly Bollinger direction + RSI >50 or <50). For Hourly views, keep the date range short (last 5–20 trading days is typical); a full year of 1h bars is rarely useful and extremely noisy. Use the From/To pickers to zoom exactly on the period you care about instead of a fixed 'last N bars' window.")
+    st.caption("**How traders typically use these charts:** Weekly/Monthly for big-picture trend, major levels, and long-term volatility regime. Daily for primary setups and signals (most common 'working' timeframe). Hourly for precise timing and entries — but only after you have established bias from a higher timeframe (e.g. daily or weekly Bollinger direction + RSI >50 or <50). For Hourly views, keep the date range short (last 5–20 trading days is typical); a full year of 1h bars is rarely useful and extremely noisy. Use the From/To pickers to zoom exactly on the period you care about instead of a fixed 'last N bars' window. (Daily defaults to last 12 months/1 trading year — standard in TradingView/Yahoo/etc. for 200-day MA context and recent cycles; change the From date for 6M/3M/etc. if preferred.)")
 
     # Charts (Bollinger visual - now only the configurable one, since 20/2 is available via the sliders)
     st.markdown(f"### Bollinger Bands — {chart_tf}")
@@ -919,7 +919,7 @@ def main():
             f"Upper ${uc:.2f} / Lower ${lc:.2f}"
         )
 
-    st.caption("This is the (now single) configurable Bollinger chart. Use the timeframe radio + From/To date pickers above to choose the view (e.g. last couple weeks on Hourly after checking Daily/Weekly bias). Sliders let you set any period/std (including the classic 20/2). Touch prices solve for the exact close that would land on the upper/lower band for the visible data and current settings. Core analysis ('What's Unusual' etc.) still uses daily 20/2.")
+    st.caption("This is the (now single) configurable Bollinger chart. Use the timeframe radio + From/To date pickers above to choose the view (e.g. last couple weeks on Hourly after checking Daily/Weekly bias). Sliders let you set any period/std (including the classic 20/2). Touch prices solve for the exact close that would land on the upper/lower band for the visible data and current settings. Core analysis ('What's Unusual' etc.) still uses daily 20/2. (Daily defaults to ~1 year range, which is the standard '1Y' starting view in most charting tools for proper 200-day MA and cycle context.)")
 
     st.markdown(f"### RSI (on {chart_tf})")
     st.line_chart(chart_r, height=280)
