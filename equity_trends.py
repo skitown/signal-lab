@@ -95,6 +95,63 @@ def load_intraday(ticker: str, interval: str = "1h", period: str = "60d") -> pd.
         return pd.DataFrame()
 
 
+def load_chart_data(ticker: str, tf: str) -> pd.Series:
+    """Return recent close prices resampled to the requested visual chart timeframe.
+    Used only for the Bollinger and RSI *charts* (core analysis remains daily).
+    """
+    if yf is None:
+        raise RuntimeError("yfinance not installed. Run: pip install yfinance")
+    try:
+        if tf == "Hourly":
+            df = load_intraday(ticker, "1h", "60d")
+            s = df["Close"].dropna()
+            return s.iloc[-400:] if len(s) > 400 else s
+        elif tf == "Daily":
+            df = load_history(ticker, "max")
+            s = df["Close"].dropna()
+            return s.iloc[-300:] if len(s) > 300 else s
+        elif tf == "Weekly":
+            df = yf.Ticker(ticker).history(period="5y", interval="1wk", auto_adjust=True)
+            s = df["Close"].dropna()
+            return s.iloc[-150:] if len(s) > 150 else s
+        elif tf == "Monthly":
+            df = yf.Ticker(ticker).history(period="10y", interval="1mo", auto_adjust=True)
+            s = df["Close"].dropna()
+            return s.iloc[-120:] if len(s) > 120 else s
+        return pd.Series(dtype=float)
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def _bollinger_touch_price(prev_closes: pd.Series, window: int, k: float, side: str = "upper") -> float:
+    """Numerical (binary search) solve for the price P that would make the *last* bar's
+    Bollinger upper or lower band exactly equal to P.
+    prev_closes should contain the closes *before* the hypothetical current bar.
+    """
+    if len(prev_closes) < window - 1:
+        return float("nan")
+    def get_band(p: float) -> float:
+        test = pd.concat([prev_closes, pd.Series([p])])
+        b = bollinger(test, window, k).iloc[-1]
+        return float(b["upper"] if side == "upper" else b["lower"])
+    p_low = float(prev_closes.iloc[-1]) * 0.2
+    p_high = float(prev_closes.iloc[-1]) * 5.0
+    for _ in range(50):
+        p = (p_low + p_high) / 2
+        band = get_band(p)
+        if side == "upper":
+            if band > p:
+                p_low = p
+            else:
+                p_high = p
+        else:
+            if band < p:
+                p_high = p
+            else:
+                p_low = p
+    return (p_low + p_high) / 2
+
+
 # --------------------------- Compute layer ----------------------------
 
 def run_table(close: pd.Series) -> pd.DataFrame:
@@ -786,36 +843,68 @@ def main():
         if st.button("Above Upper BB", use_container_width=True):
             show_recent_cases("Close pushed above upper Bollinger band", triggers["Close pushed above upper Bollinger band"])
 
+    # Chart Timeframe selector (affects visual Bollinger + RSI charts only)
+    st.markdown("### Chart Timeframe (visual Bollinger & RSI charts)")
+    st.radio(
+        "Timeframe for the charts below",
+        options=["Hourly", "Daily", "Weekly", "Monthly"],
+        index=1,
+        horizontal=True,
+        key="chart_tf",
+        help="Switches the data frequency for the Bollinger and RSI *charts*. The core 'What's Unusual', backtests, regime (200-day), and signals remain daily-based."
+    )
+    chart_tf = st.session_state.chart_tf
+    chart_close = load_chart_data(ticker, chart_tf)
+    lookback = {"Hourly": 400, "Daily": 252, "Weekly": 104, "Monthly": 60}.get(chart_tf, 252)
+    if len(chart_close) < 30:
+        chart_close = close
+        lookback = 252
+
     # Charts (with Bollinger restored prominently)
-    st.markdown("### Price & Bollinger Bands (20, 2σ)")
+    st.markdown(f"### Price & Bollinger Bands (20, 2σ) — {chart_tf}")
     band_df = pd.DataFrame({
-        "Close": close,
-        "Upper": bb["upper"],
-        "Mid": bb["mid"],
-        "Lower": bb["lower"],
-    }).iloc[-252:]
+        "Close": chart_close,
+        "Upper": bollinger(chart_close, 20, 2.0)["upper"],
+        "Mid": bollinger(chart_close, 20, 2.0)["mid"],
+        "Lower": bollinger(chart_close, 20, 2.0)["lower"],
+    }).iloc[-lookback:]
     st.line_chart(band_df, height=320)
 
-    st.markdown("### Comparison Bollinger Bands")
+    st.markdown(f"### Comparison Bollinger Bands — {chart_tf}")
     c1, c2 = st.columns(2)
     with c1:
         st.slider("Period", min_value=5, max_value=100, value=30, step=1, key="bb_period")
     with c2:
         st.slider("Std Dev", min_value=1.0, max_value=4.0, value=3.0, step=0.1, key="bb_std")
-    custom_bb = bollinger(close, st.session_state.bb_period, st.session_state.bb_std)
+    custom_bb = bollinger(chart_close, st.session_state.bb_period, st.session_state.bb_std)
     custom_df = pd.DataFrame({
-        "Close": close,
+        "Close": chart_close,
         "Upper": custom_bb["upper"],
         "Mid": custom_bb["mid"],
         "Lower": custom_bb["lower"],
-    }).iloc[-252:]
+    }).iloc[-lookback:]
     st.line_chart(custom_df, height=320)
 
-    st.caption("The top chart is always the standard 20-period / 2σ (the one used for all \"What's Unusual\" calculations like squeezes and band walks). The bottom chart lets you experiment with other lengths and widths (defaults to the 30/3 your friend asked about). Traders often compare multiple lengths on one chart for confluence or to see short-term vs. longer-term volatility.")
+    # Crossover / touch prices (what price would make close equal the band for these settings)
+    if len(chart_close) >= max(20, st.session_state.bb_period):
+        prev_main = chart_close.iloc[-21:-1]
+        u20 = _bollinger_touch_price(prev_main, 20, 2.0, "upper")
+        l20 = _bollinger_touch_price(prev_main, 20, 2.0, "lower")
+        prev_cust = chart_close.iloc[-(st.session_state.bb_period + 1):-1]
+        uc = _bollinger_touch_price(prev_cust, st.session_state.bb_period, st.session_state.bb_std, "upper")
+        lc = _bollinger_touch_price(prev_cust, st.session_state.bb_period, st.session_state.bb_std, "lower")
+        st.caption(
+            f"Touch prices (what the stock would need to trade at to hit the bands on this timeframe): "
+            f"Main 20/2 Upper ${u20:.2f} / Lower ${l20:.2f}  |  "
+            f"Custom Upper ${uc:.2f} / Lower ${lc:.2f}"
+        )
+
+    st.caption("Top chart = fixed standard 20/2 on the selected timeframe (core 'What's Unusual' signals use daily 20/2). Bottom = your adjustable comparison (defaults to 30/3). Sliders change the comparison settings. Touch prices solve for the exact close that would land on the upper/lower band.")
 
     with st.expander("Additional Charts", expanded=False):
-        st.markdown("### RSI (last 1 year)")
-        st.line_chart(r.iloc[-252:], height=280)
+        st.markdown(f"### RSI (on {chart_tf})")
+        chart_r = rsi(chart_close, st.session_state.rsi_period)
+        st.line_chart(chart_r.iloc[-lookback:], height=280)
 
         st.markdown("### Trailing Returns")
         rets = {
