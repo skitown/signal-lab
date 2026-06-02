@@ -889,6 +889,8 @@ def main():
         chart_close = close.iloc[-100:]  # fallback
         st.warning("Very few bars in the selected date range — using fallback data.")
 
+    chart_r = rsi(chart_close, st.session_state.rsi_period)
+
     st.caption("**How traders typically use these charts:** Weekly/Monthly for big-picture trend, major levels, and long-term volatility regime. Daily for primary setups and signals (most common 'working' timeframe). Hourly for precise timing and entries — but only after you have established bias from a higher timeframe (e.g. daily or weekly Bollinger direction + RSI >50 or <50). For Hourly views, keep the date range short (last 5–20 trading days is typical); a full year of 1h bars is rarely useful and extremely noisy. Use the From/To pickers to zoom exactly on the period you care about instead of a fixed 'last N bars' window.")
 
     # Charts (Bollinger visual - now only the configurable one, since 20/2 is available via the sliders)
@@ -919,11 +921,10 @@ def main():
 
     st.caption("This is the (now single) configurable Bollinger chart. Use the timeframe radio + From/To date pickers above to choose the view (e.g. last couple weeks on Hourly after checking Daily/Weekly bias). Sliders let you set any period/std (including the classic 20/2). Touch prices solve for the exact close that would land on the upper/lower band for the visible data and current settings. Core analysis ('What's Unusual' etc.) still uses daily 20/2.")
 
-    with st.expander("Additional Charts", expanded=False):
-        st.markdown(f"### RSI (on {chart_tf})")
-        chart_r = rsi(chart_close, st.session_state.rsi_period)
-        st.line_chart(chart_r, height=280)
+    st.markdown(f"### RSI (on {chart_tf})")
+    st.line_chart(chart_r, height=280)
 
+    with st.expander("Additional Charts", expanded=False):
         st.markdown("### Trailing Returns")
         rets = {
             "1 week (5d)": trailing_return(close, 5),
