@@ -922,7 +922,16 @@ def main():
     st.caption("This is the (now single) configurable Bollinger chart. Use the timeframe radio + From/To date pickers above to choose the view (e.g. last couple weeks on Hourly after checking Daily/Weekly bias). Sliders let you set any period/std (including the classic 20/2). Touch prices solve for the exact close that would land on the upper/lower band for the visible data and current settings. Core analysis ('What's Unusual' etc.) still uses daily 20/2. (Daily defaults to ~1 year range, which is the standard '1Y' starting view in most charting tools for proper 200-day MA and cycle context.)")
 
     st.markdown(f"### RSI (on {chart_tf})")
-    st.line_chart(chart_r, height=280)
+    rsi_df = chart_r.reset_index()
+    rsi_df.columns = ['Date', 'RSI']
+    rsi_line = alt.Chart(rsi_df).mark_line(color='#3b82f6', opacity=0.9).encode(
+        x=alt.X('Date:T', title=None),
+        y=alt.Y('RSI:Q', title='RSI', scale=alt.Scale(domain=[0, 100]))
+    ).properties(height=280)
+    h30 = alt.Chart(pd.DataFrame({'RSI': [30]})).mark_rule(color='#16a34a', strokeDash=[4, 4], opacity=0.8).encode(y='RSI:Q')
+    h70 = alt.Chart(pd.DataFrame({'RSI': [70]})).mark_rule(color='#dc2626', strokeDash=[4, 4], opacity=0.8).encode(y='RSI:Q')
+    st.altair_chart(rsi_line + h30 + h70, use_container_width=True)
+    st.caption("Classic RSI thresholds: horizontal lines at 30 (oversold, potential bullish reversal) and 70 (overbought, potential bearish reversal). These are the levels the app's signals and 'What's Unusual' section watch for. Note: in strong trends RSI can stay extreme for long periods.")
 
     with st.expander("Additional Charts", expanded=False):
         st.markdown("### Trailing Returns")
