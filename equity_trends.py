@@ -796,6 +796,16 @@ def main():
         st.markdown("### RSI (last 1 year)")
         st.line_chart(r.iloc[-252:], height=280)
 
+        st.markdown("### Bollinger Bands (30, 3σ)")
+        bb30 = bollinger(close, 30, 3.0)
+        band30_df = pd.DataFrame({
+            "Close": close,
+            "Upper": bb30["upper"],
+            "Mid": bb30["mid"],
+            "Lower": bb30["lower"],
+        }).iloc[-252:]
+        st.line_chart(band30_df, height=320)
+
         st.markdown("### Trailing Returns")
         rets = {
             "1 week (5d)": trailing_return(close, 5),
