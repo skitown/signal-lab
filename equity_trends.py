@@ -855,10 +855,41 @@ def main():
     )
     chart_tf = st.session_state.chart_tf
     chart_close = load_chart_data(ticker, chart_tf)
-    lookback = {"Hourly": 400, "Daily": 252, "Weekly": 104, "Monthly": 60}.get(chart_tf, 252)
-    if len(chart_close) < 30:
-        chart_close = close
-        lookback = 252
+
+    # Date range picker — traders rarely stare at "whole year" on every chart.
+    # Use this to zoom (e.g. last 10 trading days on hourly, or a specific event window).
+    if len(chart_close) > 0:
+        min_date = chart_close.index[0].date()
+        max_date = chart_close.index[-1].date()
+        # sensible defaults per TF (plenty of context without overload)
+        if chart_tf == "Hourly":
+            def_start = (pd.Timestamp(max_date) - pd.Timedelta(days=14)).date()
+        elif chart_tf == "Daily":
+            def_start = (pd.Timestamp(max_date) - pd.DateOffset(months=12)).date()
+        elif chart_tf == "Weekly":
+            def_start = (pd.Timestamp(max_date) - pd.DateOffset(years=2)).date()
+        else:
+            def_start = (pd.Timestamp(max_date) - pd.DateOffset(years=5)).date()
+        def_start = max(def_start, min_date)
+
+        c_from, c_to = st.columns(2)
+        with c_from:
+            from_date = st.date_input("From", value=def_start, min_value=min_date, max_value=max_date, key="chart_from")
+        with c_to:
+            to_date = st.date_input("To", value=max_date, min_value=from_date, max_value=max_date, key="chart_to")
+
+        mask = (chart_close.index.date >= from_date) & (chart_close.index.date <= to_date)
+        chart_close = chart_close[mask]
+
+        # cap very long ranges (esp. hourly) for readability/perf
+        if len(chart_close) > 600:
+            chart_close = chart_close.iloc[-600:]
+
+    if len(chart_close) < 5:
+        chart_close = close.iloc[-100:]  # fallback
+        st.warning("Very few bars in the selected date range — using fallback data.")
+
+    st.caption("**How traders typically use these charts:** Weekly/Monthly for big-picture trend, major levels, and long-term volatility regime. Daily for primary setups and signals (most common 'working' timeframe). Hourly for precise timing and entries — but only after you have established bias from a higher timeframe (e.g. daily or weekly Bollinger direction + RSI >50 or <50). For Hourly views, keep the date range short (last 5–20 trading days is typical); a full year of 1h bars is rarely useful and extremely noisy. Use the From/To pickers to zoom exactly on the period you care about instead of a fixed 'last N bars' window.")
 
     # Charts (with Bollinger restored prominently)
     st.markdown(f"### Price & Bollinger Bands (20, 2σ) — {chart_tf}")
@@ -867,7 +898,7 @@ def main():
         "Upper": bollinger(chart_close, 20, 2.0)["upper"],
         "Mid": bollinger(chart_close, 20, 2.0)["mid"],
         "Lower": bollinger(chart_close, 20, 2.0)["lower"],
-    }).iloc[-lookback:]
+    })
     st.line_chart(band_df, height=320)
 
     st.markdown(f"### Comparison Bollinger Bands — {chart_tf}")
@@ -882,7 +913,7 @@ def main():
         "Upper": custom_bb["upper"],
         "Mid": custom_bb["mid"],
         "Lower": custom_bb["lower"],
-    }).iloc[-lookback:]
+    })
     st.line_chart(custom_df, height=320)
 
     # Crossover / touch prices (what price would make close equal the band for these settings)
@@ -899,12 +930,12 @@ def main():
             f"Custom Upper ${uc:.2f} / Lower ${lc:.2f}"
         )
 
-    st.caption("Top chart = fixed standard 20/2 on the selected timeframe (core 'What's Unusual' signals use daily 20/2). Bottom = your adjustable comparison (defaults to 30/3). Sliders change the comparison settings. Touch prices solve for the exact close that would land on the upper/lower band.")
+    st.caption("Top chart = fixed standard 20/2 on the selected timeframe (core 'What's Unusual' signals use daily 20/2). Bottom = your adjustable comparison (defaults to the 30/3 your friend asked about). Use the date pickers (From/To) above to focus the view — e.g. last 10 trading days on Hourly for timing entries, or 6-24 months on Daily for swing setups. Sliders change only the comparison Bollinger settings. Touch prices solve for the exact close that would land on the upper/lower band for the visible data.")
 
     with st.expander("Additional Charts", expanded=False):
         st.markdown(f"### RSI (on {chart_tf})")
         chart_r = rsi(chart_close, st.session_state.rsi_period)
-        st.line_chart(chart_r.iloc[-lookback:], height=280)
+        st.line_chart(chart_r, height=280)
 
         st.markdown("### Trailing Returns")
         rets = {
