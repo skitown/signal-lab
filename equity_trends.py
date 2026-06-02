@@ -607,6 +607,7 @@ def main():
     st.markdown(header, unsafe_allow_html=True)
 
     bb = bollinger(close)
+    bb30 = bollinger(close, 30, 3.0)
     r = rsi(close, st.session_state.rsi_period)
     reg_now = current_regime(close)
 
@@ -792,19 +793,18 @@ def main():
     }).iloc[-252:]
     st.line_chart(band_df, height=320)
 
+    st.markdown("### Bollinger Bands (30, 3σ)")
+    band30_df = pd.DataFrame({
+        "Close": close,
+        "Upper": bb30["upper"],
+        "Mid": bb30["mid"],
+        "Lower": bb30["lower"],
+    }).iloc[-252:]
+    st.line_chart(band30_df, height=320)
+
     with st.expander("Additional Charts", expanded=False):
         st.markdown("### RSI (last 1 year)")
         st.line_chart(r.iloc[-252:], height=280)
-
-        st.markdown("### Bollinger Bands (30, 3σ)")
-        bb30 = bollinger(close, 30, 3.0)
-        band30_df = pd.DataFrame({
-            "Close": close,
-            "Upper": bb30["upper"],
-            "Mid": bb30["mid"],
-            "Lower": bb30["lower"],
-        }).iloc[-252:]
-        st.line_chart(band30_df, height=320)
 
         st.markdown("### Trailing Returns")
         rets = {
