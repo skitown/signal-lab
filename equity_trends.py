@@ -42,6 +42,7 @@ except ImportError:
 # ----------------------------- Constants -----------------------------
 MIN_OCCURRENCES = 10
 SIGNAL_HORIZON = 10
+OVERSOLD_RSI = 30   # RSI at or below this level is treated as oversold (common trader usage + matches the "oversold on hourly" language)
 
 SETUP_DIRECTION = {
     "RSI crossed below 30 (oversold)": "bullish",
@@ -244,7 +245,7 @@ def hourly_oversold(close_h: pd.Series, rsi_period: int = 14) -> dict:
     last_close = float(close_h.iloc[-1])
     lower = bb["lower"].iloc[-1]
     below_lower = last_close < lower if not pd.isna(lower) else False
-    rsi_os = last_rsi < 30
+    rsi_os = last_rsi <= OVERSOLD_RSI
     return {
         "available": True,
         "last_rsi": last_rsi,
@@ -485,7 +486,7 @@ def build_findings(close, rsi_period=14, intraday=None):
     # Key new item: surface hourly oversold even when daily is quiet (directly for the Slack example)
     if intraday and intraday.get("available") and intraday.get("is_oversold"):
         h_rsi = intraday.get("last_rsi", 0)
-        if last_rsi > 30:
+        if last_rsi > OVERSOLD_RSI:
             findings.append(("⚠️", f"Oversold on hourly (RSI {h_rsi:.0f}) — daily RSI not oversold. This is the exact class of short-term signal used in the 'Bought ... Oversold on hourly' trade."))
         else:
             findings.append(("•", f"Hourly also oversold (RSI {h_rsi:.0f})."))
@@ -522,6 +523,36 @@ def main():
         @media (min-width: 641px) {
           div[data-testid="stMetricValue"] { font-size: 1.0rem !important; }
           div[data-testid="stMetricLabel"] { font-size: 0.6rem !important; }
+        }
+
+        /* === GREEN PRIMARY BUTTON + SEARCH FIELD (trivial color-only, layout is handled by columns) ===
+           Streamlit primary buttons and input focus rings inherit the theme primaryColor (which can be red or blue).
+           We override ONLY colors here with !important. This is the easy part.
+           (The hard mobile layout fights for button positioning were deliberately avoided by using columns + vertical_alignment.)
+        */
+        /* Search button green (matches Bullish verdict #16a34a) */
+        button[kind="primary"],
+        button[data-testid="baseButton-primary"] {
+          background-color: #16a34a !important;
+          border-color: #16a34a !important;
+          color: white !important;
+        }
+        button[kind="primary"]:hover,
+        button[data-testid="baseButton-primary"]:hover {
+          background-color: #15803d !important;
+          border-color: #15803d !important;
+        }
+        button[kind="primary"]:active,
+        button[data-testid="baseButton-primary"]:active {
+          background-color: #166534 !important;
+          border-color: #166534 !important;
+        }
+
+        /* Green focus ring / outline on the search text input (instead of red or default primary) */
+        [data-testid="stTextInput"] input:focus,
+        div[data-baseweb="input"] input:focus {
+          border-color: #16a34a !important;
+          box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25) !important;
         }
         </style>
         """,
@@ -599,7 +630,7 @@ def main():
 
     # === PROMINENT OVERSOLD ALARM BELLS ===
     # Placed high and loud right after the verdict so oversold conditions (daily or hourly) are impossible to miss.
-    daily_oversold = r.iloc[-1] <= 30
+    daily_oversold = r.iloc[-1] <= OVERSOLD_RSI
     hourly_oversold_now = intraday and intraday.get("available") and intraday.get("is_oversold")
     if daily_oversold or hourly_oversold_now:
         alarm_lines = []
